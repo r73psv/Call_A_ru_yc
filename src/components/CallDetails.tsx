@@ -1,0 +1,532 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useState } from 'react';
+import { 
+  AlertTriangle, Check, ShieldAlert, Star, 
+  ThumbsUp, Volume2, MessageSquare, 
+  MessageCircle, Database, Download, ExternalLink, Zap,
+  ShieldCheck, Lock, Clock, Mic, FileText, Smartphone, HeartHandshake
+} from 'lucide-react';
+import { CallRecord } from '../types.js';
+import { ReanalyzeButton } from './ReanalyzeButton.js';
+
+interface CallDetailsProps {
+  call: CallRecord;
+  onSendVk: (id: string) => Promise<{ success: boolean; error?: string }>;
+  onSendYclients: (id: string) => Promise<boolean>;
+  onReanalyze?: (id: string) => Promise<boolean>;
+  onCallUpdated?: (updated: CallRecord) => void;
+  userRole?: string;
+}
+
+export function CallDetails({ 
+  call, 
+  onSendVk, 
+  onSendYclients, 
+  onReanalyze,
+  onCallUpdated,
+  userRole = 'admin',
+}: CallDetailsProps) {
+  const [sendingVk, setSendingVk] = useState(false);
+  const [sentVk, setSentVk] = useState(false);
+  const [sendingYc, setSendingYc] = useState(false);
+  const [sentYc, setSentYc] = useState(false);
+  const [vkError, setVkError] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    setVkError(null);
+  }, [call.call_id]);
+
+  const handleVk = async () => {
+    setSendingVk(true);
+    setVkError(null);
+    const result = await onSendVk(call.call_id);
+    setSendingVk(false);
+    if (result.success) {
+      setSentVk(true);
+      setTimeout(() => setSentVk(false), 3000);
+    } else {
+      setVkError(result.error || 'Произошла ошибка при отправке в VK');
+    }
+  };
+
+  const handleYc = async () => {
+    setSendingYc(true);
+    const success = await onSendYclients(call.call_id);
+    setSendingYc(false);
+    if (success) {
+      setSentYc(true);
+      setTimeout(() => setSentYc(false), 3000);
+    }
+  };
+
+  const getScoreColor = (score: number | null | undefined) => {
+    if (score === null || score === undefined) return 'text-slate-500 bg-slate-50 border-slate-200';
+    if (score >= 8) return 'text-green-600 bg-green-50 border-green-200';
+    if (score >= 5) return 'text-amber-600 bg-amber-50 border-amber-200';
+    return 'text-red-600 bg-red-50 border-red-200';
+  };
+
+  const getOutcomeColor = (outcome: string) => {
+    if (outcome === 'успешно') return 'bg-green-100 text-green-800 border-green-200';
+    if (outcome === 'перенесён') return 'bg-blue-100 text-blue-800 border-blue-200';
+    return 'bg-red-100 text-red-800 border-red-200';
+  };
+
+  const parsedTranscriptLines = (call.transcript || '').split('\n').filter(line => line.trim().length > 0);
+
+  const STATUS_DETAILS: Record<string, { title: string; badge: string; desc: string; colorClass: string }> = {
+    missed: {
+      title: 'Пропущенный звонок',
+      badge: 'Пропущенный звонок',
+      desc: 'Вызов не был принят оператором, либо исходящий звонок остался без ответа. Запись разговора и стенограмма отсутствуют.',
+      colorClass: 'bg-amber-50 text-amber-700 border-amber-200'
+    },
+    Cancel: {
+      title: 'Звонок отменен',
+      badge: 'Звонок отменен',
+      desc: 'Входящий или исходящий звонок был отменен одной из сторон до установки соединения.',
+      colorClass: 'bg-rose-50 text-rose-700 border-rose-200'
+    },
+    Busy: {
+      title: 'Линия занята',
+      badge: 'Ответ «Занято»',
+      desc: 'Вызываемый абонент занят другим разговором.',
+      colorClass: 'bg-amber-50 text-amber-700 border-amber-200'
+    },
+    NotAvailable: {
+      title: 'Абонент недоступен',
+      badge: 'Недоступен',
+      desc: 'Телефон клиента выключен или находится вне зоны действия сети.',
+      colorClass: 'bg-slate-50 text-slate-700 border-slate-200'
+    },
+    NotAllowed: {
+      title: 'Звонки запрещены',
+      badge: 'Запрещено',
+      desc: 'Направление вызова заблокировано правилами маршрутизации АТС.',
+      colorClass: 'bg-red-50 text-red-700 border-red-200'
+    },
+    NotFound: {
+      title: 'Абонент не найден',
+      badge: 'Не найден',
+      desc: 'Номер не существует в сети оператора связи.',
+      colorClass: 'bg-purple-50 text-purple-700 border-purple-200'
+    }
+  };
+
+  const isUnsuccessful = call.status !== 'completed' && STATUS_DETAILS[call.status];
+
+  if (isUnsuccessful) {
+    const details = STATUS_DETAILS[call.status];
+    return (
+      <div className="bg-white border border-slate-100 rounded-2xl shadow-xs overflow-hidden flex flex-col h-full text-left" id="call-details-panel">
+        <div className="p-5 border-b border-slate-100 bg-slate-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-xs font-mono font-medium text-slate-400 uppercase tracking-wide">
+                {call.call_id}
+              </span>
+              <span className={`text-[11px] px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider border ${details.colorClass}`}>
+                {details.badge}
+              </span>
+              <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">
+                152-ФЗ: Н/Д (Звонок не состоялся)
+              </span>
+            </div>
+            <h1 className="text-lg font-bold text-slate-800">
+              {call.client_phone_masked || call.client_name || 'Клиент'} ↔ {call.operator_name || 'Оператор'}
+            </h1>
+          </div>
+
+          <div className="text-xs text-slate-500 font-medium">
+            {new Date(call.timestamp).toLocaleString('ru-RU', {
+              year: 'numeric',
+              month: 'long',
+              day: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+              timeZone: 'Europe/Samara'
+            })}
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-8 flex flex-col items-center justify-center text-center max-w-md mx-auto space-y-6">
+          <div className={`p-4 rounded-full border shadow-xs animate-pulse ${details.colorClass}`}>
+            <Volume2 className="w-10 h-10" />
+          </div>
+
+          <div className="space-y-2">
+            <h2 className="text-base font-bold text-slate-800">
+              {details.title}
+            </h2>
+            <p className="text-xs text-slate-500 leading-relaxed font-normal">
+              {details.desc}
+            </p>
+          </div>
+
+          <div className="w-full bg-slate-50 rounded-2xl p-5 border border-slate-100/80 text-left space-y-4">
+            <div>
+              <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Рекомендация для администратора</span>
+              <ul className="space-y-2">
+                {call.recommendations && call.recommendations.length > 0 ? (
+                  call.recommendations.map((rec, idx) => (
+                    <li key={idx} className="text-xs text-slate-700 flex items-start gap-2 leading-relaxed">
+                      <span className="w-4 h-4 rounded-full bg-blue-100 text-blue-700 font-bold flex items-center justify-center shrink-0 text-[10px] mt-0.5">!</span>
+                      <span>{rec}</span>
+                    </li>
+                  ))
+                ) : (
+                  <li className="text-xs text-slate-500">Рекомендаций нет</li>
+                )}
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white border border-slate-100 rounded-2xl shadow-xs overflow-hidden flex flex-col h-full text-left" id="call-details-panel">
+      {/* Detail Header */}
+      <div className="p-5 border-b border-slate-100 bg-slate-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <div className="flex flex-wrap items-center gap-2 mb-1.5">
+            <span className="text-xs font-mono font-medium text-slate-400 uppercase tracking-wide">
+              {call.call_id}
+            </span>
+
+            {/* Model Badge */}
+            <span className="text-[11px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full font-semibold">
+              {call.model_used || 'GigaChat:Lite'}
+            </span>
+
+            {/* 152-FZ Consent Pill */}
+            {call.consent_status === 'active' ? (
+              <span className="text-[11px] bg-emerald-100 text-emerald-900 border border-emerald-300 px-2 py-0.5 rounded-full font-semibold inline-flex items-center gap-1">
+                <ShieldCheck className="w-3 h-3 text-emerald-700" /> Согласие 152-ФЗ активно
+              </span>
+            ) : call.consent_status === 'revoked' ? (
+              <span className="text-[11px] bg-rose-100 text-rose-800 border border-rose-200 px-2 py-0.5 rounded-full font-semibold">
+                Согласие отозвано
+              </span>
+            ) : (
+              <span className="text-[11px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">
+                Н/Д
+              </span>
+            )}
+
+            {/* Loyalty indicator */}
+            {call.consent_purposes?.includes('loyalty_program') && (
+              <span className="text-[11px] bg-pink-50 text-pink-700 border border-pink-200 px-2 py-0.5 rounded-full font-semibold inline-flex items-center gap-0.5">
+                <HeartHandshake className="w-3 h-3" /> Программа лояльности
+              </span>
+            )}
+
+            {/* Token count */}
+            <span className="text-[11px] bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full font-mono font-medium inline-flex items-center gap-1">
+              <Zap className="w-3 h-3 text-amber-500" />
+              {(call.tokens_used?.total_tokens || 1200).toLocaleString('ru-RU')} токенов
+            </span>
+          </div>
+
+          <h1 className="text-lg font-bold text-slate-800">
+            {call.client_phone_masked || call.client_name || 'Клиент'} ↔ {call.operator_name || 'Оператор'}
+          </h1>
+        </div>
+
+        {/* Toolbar */}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* GigaChat Reanalyze Button with Model Dropdown */}
+          <ReanalyzeButton
+            callId={call.call_id}
+            currentModel={call.model_used}
+            onReanalyzed={(updated) => {
+              if (onCallUpdated) onCallUpdated(updated);
+            }}
+            userRole={userRole}
+          />
+
+          <button
+            onClick={handleVk}
+            disabled={sendingVk || call.status !== 'completed'}
+            className={`text-xs font-medium px-3.5 py-1.5 rounded-lg border flex items-center gap-1.5 transition-all ${
+              sentVk 
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200'
+            }`}
+          >
+            {sentVk ? <Check className="w-3.5 h-3.5" /> : <MessageCircle className="w-3.5 h-3.5 text-sky-500" />}
+            {sentVk ? 'Отправлено в VK' : 'ВКонтакте (152-ФЗ)'}
+          </button>
+
+          <button
+            onClick={handleYc}
+            disabled={sendingYc || call.status !== 'completed'}
+            className={`text-xs font-medium px-3.5 py-1.5 rounded-lg border flex items-center gap-1.5 transition-all ${
+              sentYc 
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200'
+            }`}
+          >
+            {sentYc ? <Check className="w-3.5 h-3.5" /> : <Database className="w-3.5 h-3.5 text-amber-500" />}
+            {sentYc ? 'В Yclients' : 'В Yclients CRM'}
+          </button>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-5 grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {vkError && (
+          <div className="lg:col-span-12 bg-rose-50 border border-rose-200 rounded-xl p-4 text-xs text-rose-800 flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold">Ошибка отправки в VK:</p>
+              <p className="mt-0.5">{vkError}</p>
+            </div>
+          </div>
+        )}
+
+        {/* Left column (Analysis & Recommendations) */}
+        <div className="lg:col-span-7 space-y-5">
+          {/* Summary Box */}
+          <div className="border border-slate-100 rounded-xl p-4 bg-white">
+            <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
+              Краткое содержание (Резюме диалога)
+            </h3>
+            <p className="text-xs text-slate-700 leading-relaxed">
+              {call.summary || 'Резюме не сформировано'}
+            </p>
+          </div>
+
+          {/* Key Facts Box */}
+          <div className="border border-slate-100 rounded-xl p-4">
+            <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3.5">Ключевые факты</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-3">
+                <div>
+                  <span className="block text-[11px] font-medium text-slate-400 uppercase mb-1">Итог разговора</span>
+                  <span className={`text-xs font-semibold px-2.5 py-1 rounded-md border ${getOutcomeColor(call.key_facts?.call_outcome || 'успешно')}`}>
+                    {call.key_facts?.call_outcome?.toUpperCase() || 'УСПЕШНО'}
+                  </span>
+                </div>
+
+                <div>
+                  <span className="block text-[11px] font-medium text-slate-400 uppercase mb-1">Конфликт / Спор</span>
+                  {call.key_facts?.is_dispute ? (
+                    <div className="flex items-center gap-1.5 bg-red-50 border border-red-100 text-red-700 px-2.5 py-1.5 rounded-lg text-xs font-medium">
+                      <ShieldAlert className="w-4 h-4" />
+                      <div>
+                        <span className="font-semibold block">Обнаружен спор</span>
+                        <span className="text-[11px] text-red-600 font-normal">{call.key_facts.dispute_reason}</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-xs text-slate-600 bg-slate-50 border border-slate-100 px-2.5 py-1 rounded-md font-medium">
+                      <ThumbsUp className="w-3.5 h-3.5 text-emerald-500" /> Конфликты отсутствуют
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-3 border-t sm:border-t-0 sm:border-l border-slate-100 sm:pl-4">
+                <div>
+                  <span className="block text-[11px] font-medium text-slate-400 mb-1.5">Тональность</span>
+                  <div className="space-y-2 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-500">Клиент:</span>
+                      <span className="font-semibold px-2 py-0.5 rounded-sm capitalize bg-slate-100 text-slate-700">
+                        {call.key_facts?.tone_client || 'нейтральный'}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-500">Администратор:</span>
+                      <span className="font-semibold px-2 py-0.5 rounded-sm capitalize bg-slate-100 text-slate-700">
+                        {call.key_facts?.tone_manager || 'спокойный'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {call.key_facts?.promises && call.key_facts.promises.length > 0 && (
+              <div className="mt-4 pt-4 border-t border-slate-100">
+                <span className="block text-[11px] font-medium text-slate-400 uppercase mb-2">Обещания клиенту:</span>
+                <ul className="space-y-1.5 text-xs">
+                  {call.key_facts.promises.map((p, idx) => (
+                    <li key={idx} className="flex items-start gap-1.5 text-slate-700">
+                      <Check className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+                      <span>{p}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+
+          {/* Trigger phrases */}
+          {call.trigger_phrases && call.trigger_phrases.length > 0 && (
+            <div className="border border-slate-100 rounded-xl p-4 bg-rose-50/20">
+              <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2.5 flex items-center gap-1.5">
+                <AlertTriangle className="w-4 h-4 text-rose-500" /> Выявленные триггеры недовольства ({call.trigger_phrases.length})
+              </h3>
+              <div className="space-y-1.5">
+                {call.trigger_phrases.map((phrase, idx) => (
+                  <div key={idx} className="text-xs italic bg-rose-50 border border-rose-100 text-rose-900 p-2.5 rounded-lg border-l-4 border-l-rose-500">
+                    «{phrase}»
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Recommendations */}
+          <div className="border border-slate-100 rounded-xl p-4 bg-blue-50/10">
+            <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2.5">
+              Рекомендации для администратора
+            </h3>
+            <ul className="space-y-2 text-xs">
+              {call.recommendations && call.recommendations.length > 0 ? (
+                call.recommendations.map((rec, idx) => (
+                  <li key={idx} className="flex items-start gap-2 text-slate-700 leading-relaxed">
+                    <span className="w-5 h-5 rounded-full bg-blue-100 text-blue-700 font-bold flex items-center justify-center shrink-0 text-[10px]">
+                      {idx + 1}
+                    </span>
+                    <span>{rec}</span>
+                  </li>
+                ))
+              ) : (
+                <p className="text-slate-400">Рекомендаций нет</p>
+              )}
+            </ul>
+          </div>
+        </div>
+
+        {/* Right column */}
+        <div className="lg:col-span-5 space-y-5">
+          {/* Operator Score */}
+          <div className={`border rounded-xl p-4 ${getScoreColor(call.operator_score)}`}>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Оценка качества</h3>
+              <div className="flex items-baseline gap-0.5">
+                <span className="text-2xl font-black font-mono">
+                  {call.operator_score !== null && call.operator_score !== undefined ? call.operator_score : '—'}
+                </span>
+                {call.operator_score !== null && call.operator_score !== undefined && (
+                  <span className="text-xs text-slate-400">/ 10</span>
+                )}
+              </div>
+            </div>
+            
+            {call.operator_comment ? (
+              <div className="text-xs text-slate-700 leading-relaxed bg-white/60 p-3 rounded-lg border border-slate-200/50">
+                <span className="block font-semibold mb-1">Комментарий аудитора:</span>
+                {call.operator_comment}
+              </div>
+            ) : (
+              <div className="text-xs text-slate-500 italic">Комментарии к оценке не зафиксированы</div>
+            )}
+          </div>
+
+          {/* Audio recording & TTL */}
+          <div className="border border-slate-100 rounded-xl p-4 bg-slate-50/50 space-y-3">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+              <Volume2 className="w-4 h-4 text-indigo-500" /> Аудиозапись звонка (152-ФЗ)
+            </h3>
+
+            {call.audio_deleted ? (
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 flex items-start gap-2">
+                <Clock className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
+                <div>
+                  <div className="font-semibold">Аудиозапись удалена по регламенту</div>
+                  <div className="text-[11px] text-amber-700 mt-0.5">
+                    Срок хранения аудиозаписи (30 дней) истек. Запись безвозвратно удалена из хранилища в соответствии с 152-ФЗ.
+                  </div>
+                </div>
+              </div>
+            ) : call.audio_url ? (
+              <div className="space-y-2">
+                <audio 
+                  src={
+                    (!call.audio_url.startsWith('http') || call.audio_url.includes('megafon') || call.audio_url.includes('cp.megafon.ru'))
+                      ? `/api/megafon-ats/record-proxy?url=${encodeURIComponent(call.audio_url)}`
+                      : call.audio_url
+                  } 
+                  controls 
+                  className="w-full h-9 rounded-lg"
+                  preload="metadata"
+                />
+                <div className="text-[10px] text-slate-400">
+                  * Запись хранится не более 30 дней, затем автоматически очищается ежедневным фоновым заданием.
+                </div>
+              </div>
+            ) : (
+              <div className="text-xs text-slate-400 italic">Аудиозапись не прикреплена</div>
+            )}
+          </div>
+
+          {/* Transcript / Privacy Restriction */}
+          <div className="border border-slate-100 rounded-xl flex flex-col h-[400px]">
+            <div className="p-3.5 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
+              <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                <MessageSquare className="w-4 h-4 text-slate-400" /> Стенограмма разговора
+              </h3>
+              <span className="text-[10px] font-mono font-semibold bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-sm">
+                SpeechKit ролевой
+              </span>
+            </div>
+
+            {userRole === 'manager' ? (
+              <div className="flex-1 p-6 flex flex-col items-center justify-center text-center bg-slate-50/30">
+                <div className="p-3 bg-slate-100 rounded-full text-slate-500 mb-3">
+                  <Lock className="w-6 h-6" />
+                </div>
+                <h4 className="text-xs font-bold text-slate-800 mb-1">
+                  Доступ к расшифровке ограничен
+                </h4>
+                <p className="text-[11px] text-slate-500 max-w-xs leading-relaxed">
+                  Согласно политике обработки ПДн (152-ФЗ) и разделению ролей, дословный транскрипт доступен только администраторам. Вы можете просмотреть резюме и оценку качества в левой панели.
+                </p>
+              </div>
+            ) : (
+              <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/10">
+                {parsedTranscriptLines.length === 0 ? (
+                  <div className="h-full flex items-center justify-center text-slate-400 text-xs">
+                    Стенограмма отсутствует
+                  </div>
+                ) : (
+                  parsedTranscriptLines.map((line, idx) => {
+                    const isManager = line.startsWith('Менеджер:') || line.startsWith('Администратор:') || line.startsWith('Оператор:');
+                    const cleanLine = line.replace(/^(Менеджер:|Клиент:|Администратор:|Оператор:|Неизвестный:)\s*/, '');
+                    const speakerLabel = line.match(/^(Менеджер:|Клиент:|Администратор:|Оператор:|Неизвестный:)/)?.[0] || 'Неизвестный:';
+                    
+                    return (
+                      <div 
+                        key={idx} 
+                        className={`flex flex-col max-w-[85%] ${isManager ? 'ml-auto items-end' : 'mr-auto items-start'}`}
+                      >
+                        <span className="text-[10px] font-medium text-slate-400 mb-0.5 capitalize">
+                          {speakerLabel.replace(':', '')}
+                        </span>
+                        <div className={`p-2.5 rounded-xl text-xs leading-relaxed ${
+                          isManager 
+                            ? 'bg-indigo-600 text-white rounded-br-none' 
+                            : 'bg-white border border-slate-200 text-slate-800 rounded-bl-none shadow-3xs'
+                        }`}>
+                          {cleanLine}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

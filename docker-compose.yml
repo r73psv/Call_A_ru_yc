@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  call-analyzer:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - TZ=Europe/Moscow
+      - STORE_ENCRYPTION_KEY=${STORE_ENCRYPTION_KEY}
+      - YC_SERVICE_ACCOUNT_KEY_FILE=/app/keys/authorized_key.json
+      - YC_STORAGE_BUCKET=${YC_STORAGE_BUCKET}
+      - YC_S3_KEY_ID=${YC_S3_KEY_ID}
+      - YC_S3_SECRET_KEY=${YC_S3_SECRET_KEY}
+      - GIGACHAT_AUTH_KEY=${GIGACHAT_AUTH_KEY}
+      - GIGACHAT_MODEL=${GIGACHAT_MODEL:-GigaChat:Lite}
+      - MEGAFON_TOKEN=${MEGAFON_TOKEN}
+      - VK_TOKEN=${VK_TOKEN}
+      - VK_CHAT_ID=${VK_CHAT_ID}
+      - YCLIENTS_USER_TOKEN=${YCLIENTS_USER_TOKEN}
+      - YCLIENTS_PARTNER_TOKEN=${YCLIENTS_PARTNER_TOKEN}
+      - YCLIENTS_SALON_ID=${YCLIENTS_SALON_ID}
+    volumes:
+      - ./data:/app/data
+      - ./keys/authorized_key.json:/app/keys/authorized_key.json:ro

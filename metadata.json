@@ -1,0 +1,10 @@
+{
+  "name": "Remix CallQA AI_RU",
+  "description": "Система анализа звонков салона красоты «Лик 28» на базе Yandex SpeechKit, GigaChat (Сбер) и шифрованного хранилища AES-256-GCM в полном соответствии с 152-ФЗ",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

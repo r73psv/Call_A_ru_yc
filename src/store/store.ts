@@ -1,0 +1,264 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import * as fs from 'fs/promises';
+import { existsSync, mkdirSync, readFileSync } from 'fs';
+import path from 'path';
+import { encrypt, decrypt } from './crypto-store.js';
+import { CallRecord, LogEntry, SystemConfig, AccessLogEntry } from '../types.js';
+
+const DATA_PATH_ENC = process.env.DATA_PATH_ENC || path.join(process.cwd(), 'data', 'data-store.enc');
+const DATA_PATH_JSON = process.env.DATA_PATH || path.join(process.cwd(), 'data', 'data-store.json');
+const ROOT_JSON = path.join(process.cwd(), 'data-store.json');
+
+export interface AppDatabase {
+  calls: CallRecord[];
+  logs: LogEntry[];
+  access_log?: AccessLogEntry[];
+  config: SystemConfig;
+}
+
+const DEFAULT_CONFIG: SystemConfig = {
+  activeModel: 'GigaChat:Lite',
+  default_gigachat_model: 'GigaChat:Lite',
+  megafon: {
+    token: 'megafon_ats_auth_token_example_123',
+    webhookUrl: '/api/calls/webhook',
+    autoImport: true,
+    active: true,
+    pollingEnabled: false,
+    pollingIntervalMinutes: 5,
+    lastPollingTime: new Date(Date.now() - 12 * 3600000).toISOString(),
+  },
+  vk: {
+    token: 'vk_group_api_token_example_xyz',
+    chatId: '2000000045',
+    enabled: true,
+    template: `🔔 *Анализ звонка #{call_id}*\n📅 *Дата:* {call_date_time}\n👤 *Клиент:* {client_name}\n📞 *Оценка оператора:* {operator_score}/10\n💬 *Резюме:* {summary}\n⚠️ *Конфликт:* {is_dispute_text}\n💡 *Рекомендации:* {recommendations}`,
+  },
+  yclients: {
+    userToken: 'yclients_user_token_example_777',
+    partnerToken: 'yclients_partner_token_example_888',
+    salonId: '987654',
+    enabled: true,
+  },
+};
+
+const SEED_CALLS: CallRecord[] = [
+  {
+    call_id: 'megafon-call-89101',
+    timestamp: new Date(Date.now() - 3600000 * 4).toISOString(),
+    duration_seconds: 145,
+    model_used: 'GigaChat:Lite',
+    gigachat_model: 'GigaChat:Lite',
+    audio_url: 'https://cp.megafon.ru/record/megafon-call-89101.mp3',
+    client_name: 'Клиент (****3344)',
+    client_phone_masked: '****3344',
+    full_phone: '+79270003344',
+    operator_name: 'Мария (администратор)',
+    status: 'completed',
+    type: 'incoming',
+    is_answered: true,
+    is_demo: true,
+    consent_status: 'active',
+    consent_method: 'voice',
+    transcript: `Менеджер: Добрый день! Салон красоты «Лик 28», меня зовут Мария. Чем я могу вам помочь?\nКлиент: Здравствуйте. Я бы хотела записаться на аппаратный маникюр с покрытием шеллак на завтра на вечер.\nМенеджер: Да, конечно. Завтра на вечер есть свободное время на 18:30 и на 20:00. Какой мастер вам больше нравится — Кристина или Анна?\nКлиент: Давайте к Кристине на 18:30. Сколько это будет стоить?\nМенеджер: Аппаратный маникюр с покрытием у Кристины стоит 2100 рублей. По времени займет около полутора часов. Записываю вас на завтра на 18:30.\nКлиент: Отлично, спасибо большое!\nМенеджер: Пожалуйста! За полчаса до визита мы пришлем вам напоминание в мессенджер. Ждем вас в салоне «Лик 28»!`,
+    summary: 'Клиент обратился для записи на аппаратный маникюр с покрытием шеллак на завтрашний вечер. Администратор оперативно предложил свободное время и уточнил предпочтения. Разговор завершился успешной записью на 18:30 к мастеру Кристине.',
+    key_facts: {
+      is_dispute: false,
+      dispute_reason: null,
+      promises: ['Прислать напоминание за полчаса до визита'],
+      tone_client: 'нейтральный',
+      tone_manager: 'позитивный',
+      call_outcome: 'запись',
+      client_issue: 'Запись на маникюр',
+    },
+    trigger_phrases: [],
+    recommendations: [
+      'Отличная работа администратора, вежливость на высоком уровне.',
+      'Рекомендуется также предложить клиенту сопутствующие услуги салона «Лик 28» (парафинотерапию или уход для рук).',
+    ],
+    operator_score: 10,
+    operator_comment: 'Мария продемонстрировала отличные навыки вежливого общения, быстро ответила на вопросы по цене и длительности, зафиксировала договоренности.',
+  },
+  {
+    call_id: 'megafon-call-89102',
+    timestamp: new Date(Date.now() - 3600000 * 3).toISOString(),
+    duration_seconds: 180,
+    model_used: 'GigaChat:Pro',
+    gigachat_model: 'GigaChat:Pro',
+    audio_url: 'https://cp.megafon.ru/record/megafon-call-89102.mp3',
+    client_name: 'Клиент (****6677)',
+    client_phone_masked: '****6677',
+    full_phone: '+79270006677',
+    operator_name: 'Дмитрий (менеджер)',
+    status: 'completed',
+    type: 'incoming',
+    is_answered: true,
+    is_demo: true,
+    consent_status: 'active',
+    consent_method: 'voice',
+    transcript: `Клиент: Здравствуйте! Мне пришло сообщение, что моя запись к косметологу на сегодня отменена! Я уже еду к вам!\nМенеджер: Здравствуйте! Салон красоты «Лик 28», администратор Дмитрий. Приносим свои глубочайшие извинения. Дело в том, что специалист экстренно заболел, и мы физически не можем провести процедуру прямо сейчас.\nКлиент: Я трачу свое время на дорогу!\nМенеджер: Мы прекрасно вас понимаем и искренне сожалеем. Давайте мы подберем вам другого топ-мастера на удобное время со скидкой 30% на процедуру в качестве компенсации?\nКлиент: Ладно. А когда есть свободное время?\nМенеджер: Завтра в 12:00 или в 15:00 есть окна у Ирины, она ведущий специалист. И мы зафиксируем для вас скидку 30%.\nКлиент: Хорошо, давайте завтра на 12:00 к Ирине.\nМенеджер: Отлично, записал вас на завтра на 12:00 к Ирине. Мы перезвоним сегодня вечером для подтверждения. Еще раз извините за неудобства.`,
+    summary: 'Клиент позвонил в негодовании из-за экстренной отмены записи к косметологу. Администратор Дмитрий извинился, объяснил причину (болезнь мастера) и сгладил конфликт, подобрав запись на завтра со скидкой 30%.',
+    key_facts: {
+      is_dispute: true,
+      dispute_reason: 'Клиент недоволен отменой записи день-в-день',
+      promises: ['Предоставить скидку 30% на процедуру у косметолога Ирины', 'Перезвонить сегодня вечером для подтверждения'],
+      tone_client: 'негативный',
+      tone_manager: 'спокойный',
+      call_outcome: 'перенос',
+      client_issue: 'Отмена записи день-в-день',
+    },
+    trigger_phrases: [
+      'Мне пришло сообщение, что моя запись к косметологу на сегодня отменена!',
+      'Я трачу свое время на дорогу!',
+    ],
+    recommendations: [
+      'Администратор грамотно применил амортизацию и оперативно предложил альтернативу со скидкой.',
+      'Уведомлять клиентов об отменах минимум за 3-4 часа, чтобы предотвратить негативные обращения.',
+    ],
+    operator_score: 8,
+    operator_comment: 'Дмитрий был спокоен, не перебивал клиента, предложил решение с компенсацией в виде скидки 30%. Упущены баллы из-за позднего оповещения клиента.',
+  },
+];
+
+let memCache: AppDatabase | null = null;
+
+export function readStoreSync(): AppDatabase {
+  if (memCache) return memCache;
+
+  const dir = path.dirname(DATA_PATH_ENC);
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+
+  if (existsSync(DATA_PATH_ENC)) {
+    try {
+      const raw = readFileSync(DATA_PATH_ENC, 'utf-8');
+      const payload = JSON.parse(raw);
+      if (payload && payload.encrypted && payload.iv && payload.tag) {
+        const decryptedStr = decrypt(payload);
+        const parsed: AppDatabase = JSON.parse(decryptedStr);
+        memCache = parsed;
+        return memCache;
+      }
+    } catch (e: any) {
+      console.warn('[Store] Ошибка синхронного дешифрования data-store.enc:', e.message);
+    }
+  }
+
+  const legacyPath = existsSync(DATA_PATH_JSON) ? DATA_PATH_JSON : (existsSync(ROOT_JSON) ? ROOT_JSON : null);
+  if (legacyPath) {
+    try {
+      const raw = readFileSync(legacyPath, 'utf-8');
+      const parsed: AppDatabase = JSON.parse(raw);
+      if (parsed && Array.isArray(parsed.calls)) {
+        memCache = parsed;
+        return memCache;
+      }
+    } catch (migErr: any) {
+      console.warn('[Store] Ошибка синхронного чтения legacy хранилища:', migErr.message);
+    }
+  }
+
+  memCache = {
+    calls: SEED_CALLS,
+    logs: [
+      {
+        id: 'log-1',
+        timestamp: new Date().toISOString(),
+        type: 'info',
+        module: 'security',
+        message: 'Инициализировано зашифрованное хранилище AES-256-GCM в соответствии с 152-ФЗ',
+      },
+    ],
+    access_log: [],
+    config: DEFAULT_CONFIG,
+  };
+
+  return memCache;
+}
+
+export async function readStore(): Promise<AppDatabase> {
+  if (memCache) return memCache;
+
+  const dir = path.dirname(DATA_PATH_ENC);
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+
+  // 1. Try reading encrypted file
+  if (existsSync(DATA_PATH_ENC)) {
+    try {
+      const raw = await fs.readFile(DATA_PATH_ENC, 'utf-8');
+      const payload = JSON.parse(raw);
+      if (payload && payload.encrypted && payload.iv && payload.tag) {
+        const decryptedStr = decrypt(payload);
+        const parsed: AppDatabase = JSON.parse(decryptedStr);
+        memCache = parsed;
+        return memCache;
+      }
+    } catch (e: any) {
+      console.warn('[Store] Ошибка дешифрования data-store.enc:', e.message);
+    }
+  }
+
+  // 2. Migration: Try reading legacy unencrypted JSON file
+  const legacyPath = existsSync(DATA_PATH_JSON) ? DATA_PATH_JSON : (existsSync(ROOT_JSON) ? ROOT_JSON : null);
+  if (legacyPath) {
+    try {
+      const raw = readFileSync(legacyPath, 'utf-8');
+      const parsed: AppDatabase = JSON.parse(raw);
+      if (parsed && Array.isArray(parsed.calls)) {
+        console.log(`[Store] Миграция открытого ${legacyPath} в зашифрованный data-store.enc (152-ФЗ)...`);
+        memCache = parsed;
+        await writeStore(memCache);
+        return memCache;
+      }
+    } catch (migErr: any) {
+      console.warn('[Store] Ошибка миграции legacy хранилища:', migErr.message);
+    }
+  }
+
+  // 3. Fallback to seed data
+  memCache = {
+    calls: SEED_CALLS,
+    logs: [
+      {
+        id: 'log-1',
+        timestamp: new Date().toISOString(),
+        type: 'info',
+        module: 'security',
+        message: 'Инициализировано зашифрованное хранилище AES-256-GCM в соответствии с 152-ФЗ',
+      },
+    ],
+    access_log: [],
+    config: DEFAULT_CONFIG,
+  };
+
+  await writeStore(memCache);
+  return memCache;
+}
+
+export async function writeStore(data: AppDatabase): Promise<void> {
+  memCache = data;
+  const dir = path.dirname(DATA_PATH_ENC);
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+
+  // Sort calls newest first
+  if (Array.isArray(data.calls)) {
+    data.calls.sort((a, b) => {
+      const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+      const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+      return timeB - timeA;
+    });
+  }
+
+  const jsonStr = JSON.stringify(data, null, 2);
+  const payload = encrypt(jsonStr);
+  await fs.writeFile(DATA_PATH_ENC, JSON.stringify(payload, null, 2), 'utf-8');
+}

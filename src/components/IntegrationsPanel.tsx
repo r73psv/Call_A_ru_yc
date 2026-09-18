@@ -10,6 +10,7 @@ import {
   Key, Lock, CheckCircle2, AlertTriangle, Trash2, Cpu
 } from 'lucide-react';
 import { SystemConfig, GigaChatModel } from '../types.js';
+import { S3SyncPanel } from './S3SyncPanel.js';
 
 interface IntegrationsPanelProps {
   config: SystemConfig;
@@ -48,6 +49,50 @@ export function IntegrationsPanel({ config, onSaveConfig, userRole = 'admin' }: 
   // TTL Manual Trigger
   const [runningCleanup, setRunningCleanup] = useState(false);
   const [cleanupResult, setCleanupResult] = useState<any | null>(null);
+
+  // GigaChat Queue & Test Status
+  const [queueStatus, setQueueStatus] = useState<{ pending: number; isProcessing: boolean; totalProcessed: number } | null>(null);
+  const [testingGiga, setTestingGiga] = useState(false);
+  const [gigaTestResult, setGigaTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
+
+  const fetchQueueStatus = async () => {
+    try {
+      const res = await fetch('/api/gigachat/queue');
+      if (res.ok) {
+        const data = await res.json();
+        setQueueStatus(data.queue);
+      }
+    } catch {}
+  };
+
+  useEffect(() => {
+    fetchQueueStatus();
+    const interval = setInterval(fetchQueueStatus, 4000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleTestGigaChat = async () => {
+    setTestingGiga(true);
+    setGigaTestResult(null);
+    try {
+      const res = await fetch('/api/gigachat/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: defaultModel })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setGigaTestResult({ ok: true, msg: data.message || 'Тест успешен!' });
+      } else {
+        setGigaTestResult({ ok: false, msg: data.error || 'Ошибка подключения' });
+      }
+      fetchQueueStatus();
+    } catch (err: any) {
+      setGigaTestResult({ ok: false, msg: err.message || 'Сбой сети' });
+    } finally {
+      setTestingGiga(false);
+    }
+  };
 
   const [vkEnabled, setVkEnabled] = useState(config.vk?.enabled ?? true);
   const [vkToken, setVkToken] = useState(config.vk?.token || '');
@@ -276,19 +321,54 @@ export function IntegrationsPanel({ config, onSaveConfig, userRole = 'admin' }: 
               </p>
             </div>
 
-            <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 text-xs space-y-1 text-slate-600">
-              <div className="flex justify-between">
-                <span>Авторизация:</span>
-                <span className="font-mono text-emerald-700 font-semibold">GIGACHAT_AUTH_KEY (.env)</span>
+            <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 text-xs space-y-1.5 text-slate-600">
+              <div className="flex justify-between items-center">
+                <span>Очередь запросов (FIFO):</span>
+                <span className="font-semibold inline-flex items-center gap-1.5">
+                  <span className={`w-2 h-2 rounded-full ${queueStatus?.isProcessing ? 'bg-amber-500 animate-pulse' : 'bg-emerald-500'}`}></span>
+                  {queueStatus?.isProcessing ? 'Выполняется (активен 1)' : 'Ожидание (0 активных)'}
+                  {queueStatus && queueStatus.pending > 0 && (
+                    <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-mono">
+                      +{queueStatus.pending} в очереди
+                    </span>
+                  )}
+                </span>
               </div>
               <div className="flex justify-between">
-                <span>Параметры генерации:</span>
-                <span className="font-mono text-slate-700">temperature=0.3, max_tokens=2000</span>
+                <span>Ограничение параллелизма:</span>
+                <span className="font-mono text-emerald-700 font-semibold">1 запрос одновременно (concurrency: 1)</span>
               </div>
               <div className="flex justify-between">
-                <span>Повторные попытки:</span>
-                <span className="font-mono text-slate-700">3 попытки (2с, 4с, 8с backoff)</span>
+                <span>Защита от 429 (Rate Limit):</span>
+                <span className="font-mono text-slate-700">Экспоненциальный retry (2с, 4с, 8с, 16с) + Retry-After</span>
               </div>
+              <div className="flex justify-between">
+                <span>Всего обработано очередью:</span>
+                <span className="font-mono font-semibold text-slate-800">{queueStatus?.totalProcessed ?? 0}</span>
+              </div>
+            </div>
+
+            {/* GigaChat connection & queue test */}
+            <div className="pt-1">
+              <div className="flex items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={handleTestGigaChat}
+                  disabled={testingGiga}
+                  className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-700 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${testingGiga ? 'animate-spin' : ''}`} />
+                  {testingGiga ? 'Проверка очереди...' : 'Проверить соединение и очередь'}
+                </button>
+                <span className="text-[11px] text-slate-400">
+                  {queueStatus?.pending ? `В очереди: ${queueStatus.pending}` : 'Очередь пуста'}
+                </span>
+              </div>
+              {gigaTestResult && (
+                <div className={`mt-2 p-2 rounded text-xs border ${gigaTestResult.ok ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-rose-50 border-rose-200 text-rose-800'}`}>
+                  {gigaTestResult.msg}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -533,6 +613,11 @@ export function IntegrationsPanel({ config, onSaveConfig, userRole = 'admin' }: 
               </div>
             </div>
           </div>
+        </div>
+
+        {/* 6. Хранилище S3 timeweb.cloud */}
+        <div className="lg:col-span-2">
+          <S3SyncPanel />
         </div>
       </div>
     </div>

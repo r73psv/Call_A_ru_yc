@@ -9,18 +9,19 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import dotenv from 'dotenv';
-import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { CallRecord, LogEntry, SystemConfig, ModelType, DashboardStats, KeyFacts, VkConfig, YclientsConfig, GigaChatModel } from './src/types.js';
 import { transcribeWithRetry } from './src/services/speechkit.js';
-import { analyzeWithRetry } from './src/services/gigachat.js';
+import { analyzeWithRetry, getGigaChatQueueStatus } from './src/services/gigachat.js';
 import { anonymizeTranscript, maskPhone } from './src/services/anonymize.js';
 import { readStoreSync, writeStore } from './src/store/store.js';
+import { readConsentStoreSync, writeConsentStore } from './src/store/consent-store.js';
 import { ensureAutoConsent, getConsentForPhone, registerConsent } from './src/store/consents.js';
 import { initCleanupScheduler, runCleanupNow } from './src/store/cleanup.js';
 import { consentsRouter } from './src/routes/consents.js';
 import { settingsRouter } from './src/routes/settings.js';
 import { isYandexAuthConfigured } from './src/services/yandex-auth.js';
 import { isGigaChatConfigured } from './src/services/gigachat-auth.js';
+import { hydrateFromS3, scheduleSyncToS3, manualSync, getSyncStatus } from './src/services/s3-sync.js';
 
 // Setup environment variables
 dotenv.config();
@@ -43,178 +44,23 @@ const SEED_FILE = path.join(process.cwd(), 'data-store.seed.json');
 const FALLBACK_FILE = path.join(process.cwd(), 'data-store.json');
 const DIST_PATH = path.join(process.cwd(), 'dist');
 
-// S3 Storage Helpers
-function getS3Config() {
-  const bucket = process.env.S3_BUCKET_NAME || process.env.S3_BUCKET;
-  const endpoint = process.env.S3_ENDPOINT;
-  const accessKeyId = process.env.S3_ACCESS_KEY || process.env.S3_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID;
-  const secretAccessKey = process.env.S3_SECRET_KEY || process.env.S3_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY;
-  const region = process.env.S3_REGION || process.env.AWS_REGION || 'ru-1';
-  let prefix = process.env.S3_PREFIX || process.env.S3_KEY_PREFIX || process.env.S3_FOLDER || 'app/data';
-  prefix = prefix.replace(/^\/+|\/+$/g, '');
-
-  if (!bucket || !accessKeyId || !secretAccessKey) {
-    return null;
-  }
-
-  let formattedEndpoint = endpoint;
-  if (formattedEndpoint && !formattedEndpoint.startsWith('http://') && !formattedEndpoint.startsWith('https://')) {
-    formattedEndpoint = `https://${formattedEndpoint}`;
-  }
-
+// Unified helper to construct full encrypted snapshot for S3 timeweb.cloud
+function getFullDataForSync() {
+  const db = readStoreSync();
+  const consentStore = readConsentStoreSync();
   return {
-    bucket,
-    endpoint: formattedEndpoint,
-    accessKeyId,
-    secretAccessKey,
-    region,
-    prefix,
-    key: `${prefix}/data-store.json`
+    calls: db.calls || [],
+    logs: db.logs || [],
+    config: db.config || {},
+    consents: consentStore.consents || [],
+    access_log: db.access_log || []
   };
 }
 
-let s3ClientInstance: S3Client | null = null;
-function getS3Client() {
-  if (s3ClientInstance) return s3ClientInstance;
-  const cfg = getS3Config();
-  if (!cfg) return null;
-
-  s3ClientInstance = new S3Client({
-    region: cfg.region,
-    endpoint: cfg.endpoint,
-    credentials: {
-      accessKeyId: cfg.accessKeyId,
-      secretAccessKey: cfg.secretAccessKey
-    },
-    forcePathStyle: true
-  });
-  return s3ClientInstance;
-}
-
-async function streamToString(stream: any): Promise<string> {
-  if (typeof stream.transformToString === 'function') {
-    return await stream.transformToString('utf-8');
-  }
-  return new Promise((resolve, reject) => {
-    const chunks: any[] = [];
-    stream.on('data', (chunk: any) => chunks.push(chunk));
-    stream.on('error', reject);
-    stream.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
-  });
-}
-
-let s3LastSyncTime: string | null = null;
-let s3LastError: string | null = null;
-let s3DebounceTimer: NodeJS.Timeout | null = null;
-
-async function syncToS3(dataToSync?: any): Promise<boolean> {
-  const cfg = getS3Config();
-  const client = getS3Client();
-  if (!cfg || !client) return false;
-
-  try {
-    const data = dataToSync || dbCache || readDb();
-    if (!data) return false;
-
-    const body = JSON.stringify(data, null, 2);
-    
-    await client.send(new PutObjectCommand({
-      Bucket: cfg.bucket,
-      Key: cfg.key,
-      Body: body,
-      ContentType: 'application/json'
-    }));
-
-    s3LastSyncTime = new Date().toISOString();
-    s3LastError = null;
-    console.log(`[S3] База данных успешно сохранена в s3://${cfg.bucket}/${cfg.key}`);
-    return true;
-  } catch (err: any) {
-    s3LastError = err.message || String(err);
-    console.error(`[S3 Ошибка] Не удалось синхронизировать с S3 (${cfg.bucket}/${cfg.key}):`, err);
-    return false;
-  }
-}
-
-function scheduleS3Sync() {
-  const cfg = getS3Config();
-  if (!cfg) return;
-
-  if (s3DebounceTimer) clearTimeout(s3DebounceTimer);
-  s3DebounceTimer = setTimeout(() => {
-    syncToS3().catch((err) => console.error('[S3 Sync error]', err));
-  }, 2000);
-}
-
-async function syncFromS3OnBoot(): Promise<boolean> {
-  const cfg = getS3Config();
-  const client = getS3Client();
-  if (!cfg || !client) {
-    console.log('[S3] Переменные подключения S3 не обнаружены.');
-    return false;
-  }
-
-  const candidateKeys = [
-    cfg.key,                        // app/data/data-store.json
-    'data-store.json',              // root
-    'data/data-store.json'         // data/
-  ];
-
-  for (const candidateKey of candidateKeys) {
-    try {
-      console.log(`[S3] Поиск базы данных в бакете ${cfg.bucket}: ${candidateKey}`);
-      const command = new GetObjectCommand({
-        Bucket: cfg.bucket,
-        Key: candidateKey
-      });
-      const response = await client.send(command);
-      if (response.Body) {
-        const strData = await streamToString(response.Body);
-        const parsed = JSON.parse(strData);
-        if (parsed && typeof parsed === 'object') {
-          dbCache = parsed;
-          const dataDir = path.dirname(DATA_FILE);
-          if (!fs.existsSync(dataDir)) {
-            fs.mkdirSync(dataDir, { recursive: true });
-          }
-          fs.writeFileSync(DATA_FILE, JSON.stringify(dbCache, null, 2), 'utf-8');
-          s3LastSyncTime = new Date().toISOString();
-          s3LastError = null;
-          console.log(`[S3] Успешно загружена база данных из s3://${cfg.bucket}/${candidateKey} (${parsed.calls?.length || 0} звонков)`);
-          return true;
-        }
-      }
-    } catch (err: any) {
-      if (err.name === 'NoSuchKey' || err.$metadata?.httpStatusCode === 404) {
-        console.log(`[S3] Ключ не найден: ${candidateKey}`);
-      } else {
-        s3LastError = err.message || String(err);
-        console.error(`[S3] Ошибка чтения ${candidateKey}:`, err);
-      }
-    }
-  }
-
-  console.log(`[S3] База данных не найдена в S3 бакете ${cfg.bucket}. Выполняем первичную запись локальной БД в s3://${cfg.bucket}/${cfg.key}...`);
-  const synced = await syncToS3();
-  return synced;
-}
-
-
 // Local Database initialization
 const DEFAULT_CONFIG: SystemConfig = {
-  activeModel: 'gemini',
-  openrouter: {
-    apiKey: process.env.OPENROUTER_API_KEY || '',
-    baseUrl: 'https://api.ru-openrouter.ru/v1',
-    model: 'google/gemini-2.5-flash-lite',
-    enabled: true
-  },
-  routerai: {
-    apiKey: process.env.ROUTERAI_API_KEY || '',
-    baseUrl: 'https://routerai.ru/api/v1',
-    model: 'google/gemini-2.5-flash-lite',
-    enabled: true
-  },
+  activeModel: 'GigaChat:Lite',
+  default_gigachat_model: 'GigaChat:Lite',
   megafon: {
     token: 'megafon_ats_auth_token_example_123',
     webhookUrl: '/api/calls/webhook',
@@ -329,7 +175,7 @@ function readDb() {
 function writeDb(data: any) {
   try {
     writeStore(data).catch(err => console.error('[Encrypted Store Write Error]', err));
-    scheduleS3Sync();
+    scheduleSyncToS3(getFullDataForSync);
   } catch (err) {
     console.error('Error writing database file:', err);
   }
@@ -359,22 +205,6 @@ function appendLog(
   writeDb(db);
   return newLog;
 }
-
-// Initialize Gemini Client
-const getGeminiClient = () => {
-  const key = process.env.GEMINI_API_KEY;
-  if (!key || key === 'MY_GEMINI_API_KEY') {
-    return null;
-  }
-  return new GoogleGenAI({
-    apiKey: key,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      }
-    }
-  });
-};
 
 // Helper function to normalize and fix salon brand name spelling variants
 function normalizeSalonNames(text: string): string {
@@ -606,207 +436,16 @@ function extractAndParseLLMJson(rawText: string, transcriptInput: string, module
   return getFallbackAnalysis(transcriptInput, `ИИ вернул неструктурированный текст вместо JSON: ${rawText.substring(0, 150)}`);
 }
 
-// Helper for OpenRouter API (ru-openrouter.ru or openrouter.ai)
-async function analyzeCallWithOpenRouter(
-  transcriptInput: string,
-  audioBase64?: { data: string; mimeType: string },
-  config?: OpenRouterConfig
-): Promise<Partial<CallRecord>> {
-  const rawKey = config?.apiKey || process.env.OPENROUTER_API_KEY || '';
-  const apiKey = rawKey.trim().replace(/^["']|["']$/g, '').replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/\s+/g, '');
-
-  let baseUrl = (config?.baseUrl || 'https://api.ru-openrouter.ru/v1').trim().replace(/\/+$/, '');
-  if (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
-    baseUrl = 'https://' + baseUrl;
-  }
-
-  const modelName = config?.model || 'google/gemini-2.5-flash-lite';
-
-  if (!apiKey) {
-    appendLog('warning', 'openrouter', 'API ключ OpenRouter не задан. Запущена резервная аналитика.');
-    return getFallbackAnalysis(transcriptInput, 'отсутствует API ключ OpenRouter');
-  }
-
-  let cleanText = (transcriptInput || '').trim();
-  if (
-    cleanText === 'Загрузка аудиозаписи...' ||
-    cleanText === 'Обработка аудио...' ||
-    cleanText.startsWith('Аудиозапись не была') ||
-    cleanText.startsWith('Стенограмма отсутствует') ||
-    cleanText === 'Аудиозапись телефонного разговора.'
-  ) {
-    cleanText = '';
-  }
-
-  // Pre-transcribe with Gemini if audio is present and text is missing
-  if (!cleanText && audioBase64) {
-    const geminiClient = getGeminiClient();
-    if (geminiClient) {
-      try {
-        appendLog('info', 'openrouter', `Расшифровка аудиозаписи через Gemini перед вызовом OpenRouter (${modelName})...`);
-        const gResponse = await geminiClient.models.generateContent({
-          model: 'gemini-2.5-flash',
-          contents: [
-            {
-              role: 'user',
-              parts: [
-                { inlineData: { mimeType: audioBase64.mimeType, data: audioBase64.data } },
-                { text: 'Сделай точную дословную расшифровку (стенограмму) этой аудиозаписи на русском языке. Официальное название салона — «Лик 28» (Салон красоты «Лик 28»). Если запись пустая или тишина — напиши "Аудиозапись не содержит разборчивой речи". Напиши диалог репликами в формате "Менеджер: ...", "Клиент: ...". Напиши только текст диалога без дополнительных комментариев.' }
-              ]
-            }
-          ]
-        });
-        if (gResponse.text && gResponse.text.trim()) {
-          cleanText = gResponse.text.trim();
-          appendLog('success', 'openrouter', `Транскрипция выполнена (${cleanText.length} символов). Передача текста диалога в OpenRouter...`);
-        }
-      } catch (gErr: any) {
-        appendLog('warning', 'openrouter', `Расшифровка аудиозаписи через Gemini перед вызовом OpenRouter не удалась: ${gErr.message || gErr}`);
-      }
-    }
-  }
-
-  if (!cleanText) {
-    appendLog('error', 'openrouter', `Ошибка: для анализа через OpenRouter (${modelName}) отсутствует текст диалога или не удалось расшифровать аудиозапись.`);
-    return getFallbackAnalysis('', 'Отсутствует стенограмма или аудиозапись для анализа через OpenRouter');
-  }
-
-  const promptSystem = `Ты — AI-помощник для анализа телефонных разговоров сети салонов красоты.
-ЯЗЫК СТЕНОГРАММЫ И АНАЛИЗА — СТРОГО РУССКИЙ. Все поля JSON (стенограмма, резюме, ключевые факты, рекомендации, комментарии) ДОЛЖНЫ БЫТЬ ИСКЛЮЧИТЕЛЬНО НА РУССКОМ ЯЗЫКЕ.
-
-КОНТЕКСТ САЛОНА КРАСОТЫ:
-- Официальное название салона: «Лик 28» (Салон красоты «Лик 28»). В разговорной речи может звучать как «Лик двадцать восемь», «салон Лик 28», «студия Лик 28».
-- ПРАВИЛЬНОЕ НАИМЕНОВАНИЕ: При транскрипции и анализе всегда фиксируй название салона строго как «Лик 28» (не искажай в «Ликс», «Лайк», «Лиг», «Элик» и т.п.).
-- СТАНДАРТ ПРИВЕТСТВИЯ: Название «Лик 28» является официальным эталонным брендом компании. Если администратор представляется от имени салона «Лик 28» или «Салон красоты Лик 28», это абсолютно правильно! Категорически запрещено считать это ошибкой или снижать оценку оператора.
-
-СТРОГИЕ ПРАВИЛА И ИСКЛЮЧЕНИЕ ГАЛЛЮЦИНАЦИЙ:
-1. Проанализируй разговор строго по реально фактически прозвучавшим данным. КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО выдумывать детали, имена клиентов, номера заказов (например "заказ №12345"), цены, товары или услуги, которых НЕ БЫЛО в записи или тексте!
-2. ЕСЛИ НА АУДИО ИЛИ В ТЕКСТЕ СРАБОТАЛ АВТООТВЕТЧИК, АВТОИНФОРМАТОР ИЛИ АБОНЕНТ НЕДОСТУПЕН (например: "Абонент сейчас не может ответить...", "Перезвоните позднее", "Оставьте сообщение после сигнала"):
-   - В "transcript" выведи СТРОГО реально прозвучавшую фразу (например: "Автоответчик: Абонент сейчас не может ответить на ваш звонок. Попробуйте перезвонить позднее.").
-   - В "summary" выведи СТРОГО: "Разговор не состоялся: сработал автоответчик или системный автоинформатор".
-   - В "operator_score" выведи null (так как диалога с оператором не было).
-   - В "operator_comment" напиши: "Разговор с клиентом не состоялся: на линии сработал автоответчик или автоинформатор".
-   - В "key_facts.call_outcome" напиши: "автоответчик".
-   - В "key_facts.client_issue" напиши: "Автоответчик / Абонент недоступен".
-
-ВАЖНО: ТВОЙ ОТВЕТ ДОЛЖЕН БЫТЬ СТРОГО В ФОРМАТЕ RAW JSON! НЕ ДОБАВЛЯЙ НИКАКИХ ВВОДНЫХ СЛОВ ИЛИ ПРИВЕТСТВИЙ ТИПА "Пожалуйста", "Вот результат" И Т.П. ПЕРВЫЙ СИМВОЛ ОТВЕТА — '{', ПОСЛЕДНИЙ — '}'.
-
-Схема JSON:
-{
-  "transcript": "дословная стенограмма на русском языке",
-  "summary": "краткая суть разговора по фактам на русском языке",
-  "key_facts": {
-    "is_dispute": false,
-    "dispute_reason": null,
-    "promises": [],
-    "tone_client": "нейтральный",
-    "tone_manager": "спокойный",
-    "call_outcome": "успешно",
-    "client_issue": "вопрос клиента"
-  },
-  "trigger_phrases": [],
-  "recommendations": ["рекомендация 1 на русском языке"],
-  "operator_score": 9,
-  "operator_comment": "комментарий к работе оператора на русском языке"
-}`;
-
-  let userContent = cleanText;
-
-  appendLog('info', 'openrouter', `Запрос к API OpenRouter (Модель: ${modelName}, URL: ${baseUrl})...`);
-
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000);
-
-    const response = await fetch(`${baseUrl}/chat/completions`, {
-      method: 'POST',
-      signal: controller.signal,
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://openrouter.ai',
-        'X-Title': 'Call Analytics System'
-      },
-      body: JSON.stringify({
-        model: modelName,
-        messages: [
-          { role: 'system', content: promptSystem },
-          { role: 'user', content: `Текст/данные диалога:\n${userContent}\n\nВыполни анализ и верни строго JSON без вводных слов.` }
-        ],
-        temperature: 0.2
-      })
-    });
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      const errText = await response.text();
-      let openRouterMsg = errText;
-      try {
-        const errJson = JSON.parse(errText);
-        if (errJson.error?.message) {
-          openRouterMsg = errJson.error.message;
-        }
-      } catch {
-        // use raw text
-      }
-
-      let hint = '';
-      if (openRouterMsg.includes('Missing Authentication header') || openRouterMsg.includes('User not found')) {
-        hint = ' -> Проверьте правильность API ключа в настройках.';
-      } else if (openRouterMsg.includes('Insufficient credits') || openRouterMsg.includes('credit')) {
-        hint = ' -> Недостаточно средств/баланса на аккаунте.';
-      }
-
-      throw new Error(`OpenRouter API (HTTP ${response.status}): ${openRouterMsg}${hint}`);
-    }
-
-    const data = await response.json();
-    const rawText = data.choices?.[0]?.message?.content || '{}';
-    const parsed = extractAndParseLLMJson(rawText, transcriptInput, 'openrouter');
-
-    const usage = data.usage;
-    const promptTok = usage?.prompt_tokens ?? Math.ceil(((transcriptInput || '').length + 1200) / 4);
-    const compTok = usage?.completion_tokens ?? Math.ceil(rawText.length / 4);
-    parsed.tokens_used = {
-      prompt_tokens: promptTok,
-      completion_tokens: compTok,
-      total_tokens: usage?.total_tokens ?? (promptTok + compTok)
-    };
-
-    appendLog('success', 'openrouter', `Звонок успешно проанализирован через OpenRouter API (${modelName}). Токены: ${parsed.tokens_used.total_tokens}`);
-    return parsed;
-  } catch (err: any) {
-    const isTimeout = err.name === 'AbortError';
-    const errMsg = isTimeout
-      ? `Таймаут подключения (60с) к ${baseUrl}. Сервер недоступен.`
-      : `Ошибка вызова OpenRouter (${modelName}): ${err.message || err}`;
-    appendLog('error', 'openrouter', errMsg);
-    return getFallbackAnalysis(transcriptInput, errMsg);
-  }
-}
-
-// Helper for RouterAI API (routerai.ru - OpenAI API compatible)
+// RouterAI has been deprecated in favor of GigaChat
 async function analyzeCallWithRouterAI(
   transcriptInput: string,
-  audioBase64?: { data: string; mimeType: string },
-  config?: RouterAIConfig
+  _audioBase64?: { data: string; mimeType: string },
+  _config?: any
 ): Promise<Partial<CallRecord>> {
-  const rawKey = config?.apiKey || process.env.ROUTERAI_API_KEY || '';
-  const apiKey = rawKey.trim().replace(/^["']|["']$/g, '').replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/\s+/g, '');
+  return getFallbackAnalysis(transcriptInput, 'RouterAI отключен');
+}
 
-  let baseUrl = (config?.baseUrl || 'https://routerai.ru/api/v1').trim().replace(/\/+$/, '');
-  if (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
-    baseUrl = 'https://' + baseUrl;
-  }
-
-  const modelName = config?.model || 'google/gemini-2.5-flash-lite';
-
-  if (!apiKey) {
-    appendLog('warning', 'routerai', 'API ключ RouterAI не задан. Запущена резервная аналитика.');
-    return getFallbackAnalysis(transcriptInput, 'отсутствует API ключ RouterAI');
-  }
-
-  const promptSystem = `Ты — AI-помощник для анализа телефонных разговоров сети салонов красоты.
+/* DEPRECATED_ROUTERAI_START
 ЯЗЫК СТЕНОГРАММЫ И АНАЛИЗА — СТРОГО РУССКИЙ. Все поля JSON (стенограмма, резюме, ключевые факты, рекомендации, комментарии) ДОЛЖНЫ БЫТЬ ИСКЛЮЧИТЕЛЬНО НА РУССКОМ ЯЗЫКЕ.
 
 КОНТЕКСТ САЛОНА КРАСОТЫ:
@@ -1082,6 +721,7 @@ async function analyzeCallWithRouterAI(
     return getFallbackAnalysis(transcriptInput, errMsg);
   }
 }
+*/
 
 // Helper to check if a call record failed due to technical/limitation error and needs reanalysis
 function isTechnicalFailedCall(call: any): boolean {
@@ -1193,7 +833,7 @@ async function executeSingleModelAttempt(
       gigaModel = model;
     }
     appendLog('info', 'gigachat', `Отправка запроса на анализ в модель ${gigaModel}...`);
-    const analysis = await analyzeWithRetry(anonymizedText, gigaModel);
+    const analysis = await analyzeWithRetry(anonymizedText, gigaModel, (type, msg) => appendLog(type, 'gigachat', msg));
     appendLog('success', 'gigachat', `Звонок успешно проанализирован моделью ${gigaModel}.`);
     return {
       success: true,
@@ -1289,7 +929,7 @@ async function analyzeCallTextOrAudio(
 
   appendLog('info', 'gigachat', `Отправка обезличенной стенограммы на анализ в ${modelToUse}...`);
   try {
-    const analysis = await analyzeWithRetry(anonymizedText, modelToUse);
+    const analysis = await analyzeWithRetry(anonymizedText, modelToUse, (type, msg) => appendLog(type, 'gigachat', msg));
     appendLog('success', 'gigachat', `Анализ звонка успешно выполнен моделью ${modelToUse}.`);
     return {
       transcript: cleanTranscript,
@@ -2392,7 +2032,7 @@ async function importCallRecord(extCall: any): Promise<boolean> {
     db.calls.unshift(newCall);
     writeDb(db);
     try {
-      ensureAutoConsent(extCall.client_phone || '', extCall.call_id);
+      ensureAutoConsent(extCall.client_phone || '', extCall.call_id, extCall.type || 'incoming');
     } catch (cErr) {
       console.warn('[152-ФЗ] Ошибка авто-регистрации согласия:', cErr);
     }
@@ -2559,45 +2199,84 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', uptime: process.uptime(), timestamp: new Date().toISOString() });
 });
 
-// S3 Storage Status & Manual Sync endpoints
-app.get('/api/s3/status', (req, res) => {
-  const cfg = getS3Config();
+// Helper to execute S3 hydration into local database stores
+async function performS3Hydration(): Promise<boolean> {
+  try {
+    const data = await hydrateFromS3();
+    if (data) {
+      const db = readStoreSync();
+      if (Array.isArray(data.calls)) db.calls = data.calls;
+      if (Array.isArray(data.logs)) db.logs = data.logs;
+      if (data.config) db.config = { ...db.config, ...data.config };
+      if (Array.isArray(data.access_log)) db.access_log = data.access_log;
+      await writeStore(db);
+
+      if (Array.isArray(data.consents)) {
+        const consentStore = readConsentStoreSync();
+        consentStore.consents = data.consents;
+        await writeConsentStore(consentStore);
+      }
+      return true;
+    }
+    return false;
+  } catch (err) {
+    console.error('[S3 Hydration Error]', err);
+    return false;
+  }
+}
+
+// S3 Storage Status & Sync endpoints
+app.get('/api/s3/status', async (req, res) => {
+  const status = await getSyncStatus();
   res.json({
-    configured: !!cfg,
-    bucket: cfg?.bucket || null,
-    endpoint: cfg?.endpoint || null,
-    prefix: cfg?.prefix || null,
-    key: cfg?.key || null,
-    lastSync: s3LastSyncTime,
-    lastError: s3LastError
+    configured: status.connected,
+    bucket: status.bucket,
+    endpoint: status.endpoint,
+    key: status.key,
+    lastSync: status.synced_at,
+    lastError: status.error || null,
+    ...status
   });
 });
 
-app.post('/api/s3/sync', async (req, res) => {
-  const cfg = getS3Config();
-  if (!cfg) {
-    return res.status(400).json({ success: false, message: 'Переменные окружения S3 не настроены в деплое (S3_BUCKET_NAME, S3_ACCESS_KEY, S3_SECRET_KEY)' });
-  }
+app.get('/api/sync/status', async (req, res) => {
+  const status = await getSyncStatus();
+  res.json(status);
+});
 
-  const success = await syncToS3();
-  if (success) {
-    return res.json({ success: true, message: `База данных успешно сохранена в S3: ${cfg.bucket}/${cfg.key}`, lastSync: s3LastSyncTime });
-  } else {
-    return res.status(500).json({ success: false, message: `Ошибка записи в S3: ${s3LastError}` });
+app.post('/api/s3/sync', async (req, res) => {
+  try {
+    const result = await manualSync(getFullDataForSync);
+    return res.json({
+      success: result.ok,
+      message: `База данных успешно сохранена в S3 timeweb.cloud (${result.size_bytes} байт)`,
+      lastSync: result.synced_at
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, message: `Ошибка записи в S3: ${err.message || err}` });
+  }
+});
+
+app.post('/api/sync', async (req, res) => {
+  try {
+    const result = await manualSync(getFullDataForSync);
+    return res.json(result);
+  } catch (err: any) {
+    return res.status(500).json({ ok: false, error: err.message || String(err) });
   }
 });
 
 app.post('/api/s3/pull', async (req, res) => {
-  const cfg = getS3Config();
-  if (!cfg) {
-    return res.status(400).json({ success: false, message: 'Переменные окружения S3 не настроены' });
-  }
-
-  const success = await syncFromS3OnBoot();
-  if (success) {
-    return res.json({ success: true, message: `Данные успешно загружены из S3`, callsCount: dbCache?.calls?.length || 0 });
-  } else {
-    return res.status(500).json({ success: false, message: `Ошибка получения данных из S3: ${s3LastError}` });
+  try {
+    const ok = await performS3Hydration();
+    if (ok) {
+      const db = readStoreSync();
+      return res.json({ success: true, message: 'Данные успешно загружены из S3 timeweb.cloud', callsCount: db.calls?.length || 0 });
+    } else {
+      return res.status(404).json({ success: false, message: 'Данные в S3 не найдены или произошла ошибка' });
+    }
+  } catch (err: any) {
+    return res.status(500).json({ success: false, message: `Ошибка получения данных из S3: ${err.message || err}` });
   }
 });
 
@@ -2859,7 +2538,7 @@ app.post('/api/calls/:id/reanalyze', async (req, res) => {
 
   try {
     const anonymizedText = anonymizeTranscript(call.transcript);
-    const analysis = await analyzeWithRetry(anonymizedText, targetModel);
+    const analysis = await analyzeWithRetry(anonymizedText, targetModel, (type, msg) => appendLog(type, 'gigachat', msg));
 
     const updatedCall: CallRecord = {
       ...call,
@@ -3390,17 +3069,27 @@ app.post('/api/gigachat/test', async (req, res) => {
 
   try {
     const testSample = 'Менеджер: Добрый день, салон красоты «Лик 28». Клиент: Здравствуйте, хочу узнать стоимость стрижки.';
-    const result = await analyzeWithRetry(testSample, targetModel);
+    const result = await analyzeWithRetry(testSample, targetModel, (type, msg) => appendLog(type, 'gigachat', msg));
     appendLog('success', 'gigachat', `Тест подключения к GigaChat (${targetModel}) успешен!`);
     return res.json({
       success: true,
       message: `Соединение с GigaChat успешно! Модель ${targetModel} работает корректно.`,
+      queue: getGigaChatQueueStatus(),
       data: result
     });
   } catch (err: any) {
     appendLog('error', 'gigachat', `Ошибка подключения к GigaChat: ${err.message}`);
-    res.status(500).json({ success: false, error: err.message || 'Ошибка подключения к GigaChat' });
+    res.status(500).json({ success: false, error: err.message || 'Ошибка подключения к GigaChat', queue: getGigaChatQueueStatus() });
   }
+});
+
+// 8.3.1. GIGACHAT QUEUE STATUS
+app.get('/api/gigachat/queue', (req, res) => {
+  res.json({
+    status: 'ok',
+    queue: getGigaChatQueueStatus(),
+    configured: isGigaChatConfigured()
+  });
 });
 
 // 8.4. TEST YANDEX SPEECHKIT CONNECTION (Russian Sovereign STT)
@@ -3538,8 +3227,8 @@ async function startServer() {
     console.error('[152-ФЗ] Ошибка запуска планировщика очистки:', cleanErr.message);
   }
 
-  // Hydrate database from S3 if configured
-  syncFromS3OnBoot().catch(err => console.error('[S3 Boot Sync Error]', err));
+  // Hydrate database from S3 timeweb.cloud if configured
+  performS3Hydration().catch(err => console.error('[S3 Boot Sync Error]', err));
 
   if (process.env.NODE_ENV === 'production') {
     app.use(express.static(DIST_PATH));

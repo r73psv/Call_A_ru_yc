@@ -57,6 +57,11 @@ export async function getGigaChatToken(): Promise<string> {
   return gigaTokenCache.token;
 }
 
+export function invalidateGigaChatTokenCache(): void {
+  gigaTokenCache = null;
+  console.log('[GigaChat Auth] Кэш токена авторизации сброшен');
+}
+
 export function isGigaChatConfigured(): boolean {
   return !!process.env.GIGACHAT_AUTH_KEY && process.env.GIGACHAT_AUTH_KEY !== '<ключ-авторизации-GigaChat>';
 }

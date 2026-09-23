@@ -836,7 +836,7 @@ async function executeSingleModelAttempt(
   try {
     const anonymizedText = anonymizeTranscript(cleanTranscript);
     let gigaModel: GigaChatModel = 'GigaChat:Lite';
-    if (model === 'GigaChat:Pro' || model === 'GigaChat:Max' || model === 'GigaChat:Lite') {
+    if (model === 'GigaChat:Pro' || model === 'GigaChat:Max' || model === 'GigaChat:Lite' || model === 'GigaChat:Ultra') {
       gigaModel = model;
     }
     appendLog('info', 'gigachat', `Отправка запроса на анализ в модель ${gigaModel}...`);

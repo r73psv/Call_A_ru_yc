@@ -5,7 +5,7 @@
 
 import React from 'react';
 import { GigaChatModel } from '../types.js';
-import { Bot, Sparkles, Zap, Shield } from 'lucide-react';
+import { Bot, Sparkles, Zap, Cpu } from 'lucide-react';
 
 interface ModelSelectorProps {
   currentModel: GigaChatModel | string;
@@ -42,6 +42,13 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
       desc: 'Максимальная точность нюансов речи и сложных сценариев',
       icon: Sparkles,
     },
+    {
+      id: 'GigaChat:Ultra',
+      label: 'Ultra',
+      badge: 'Reasoning',
+      desc: 'Флагман нового поколения: глубокое рассуждение и аналитика',
+      icon: Cpu,
+    },
   ];
 
   if (compact) {
@@ -70,7 +77,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   }
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
       {models.map((m) => {
         const isSelected = currentModel === m.id;
         const Icon = m.icon;

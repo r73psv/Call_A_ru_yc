@@ -645,8 +645,8 @@ export function CredentialsSettings({ authToken }: CredentialsSettingsProps) {
 
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-1">Модель по умолчанию</label>
-            <div className="grid grid-cols-3 gap-2">
-              {(['GigaChat:Lite', 'GigaChat:Pro', 'GigaChat:Max'] as GigaChatModel[]).map((m) => (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {(['GigaChat:Lite', 'GigaChat:Pro', 'GigaChat:Max', 'GigaChat:Ultra'] as GigaChatModel[]).map((m) => (
                 <button
                   key={m}
                   type="button"

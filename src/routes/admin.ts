@@ -210,7 +210,7 @@ adminRouter.post('/credentials', async (req: Request, res: Response) => {
       invalidateGigaChatTokenCache();
     }
     if (body.gigachatModel) {
-      const validModels: GigaChatModel[] = ['GigaChat:Lite', 'GigaChat:Pro', 'GigaChat:Max'];
+      const validModels: GigaChatModel[] = ['GigaChat:Lite', 'GigaChat:Pro', 'GigaChat:Max', 'GigaChat:Ultra'];
       if (validModels.includes(body.gigachatModel)) {
         creds.gigachatModel = body.gigachatModel;
         store.config.default_gigachat_model = body.gigachatModel;

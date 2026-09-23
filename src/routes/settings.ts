@@ -35,7 +35,7 @@ settingsRouter.put('/', requireRole(['admin']), async (req: Request, res: Respon
       return res.status(400).json({ error: 'Поле default_gigachat_model обязательно' });
     }
 
-    const validModels: GigaChatModel[] = ['GigaChat:Lite', 'GigaChat:Pro', 'GigaChat:Max'];
+    const validModels: GigaChatModel[] = ['GigaChat:Lite', 'GigaChat:Pro', 'GigaChat:Max', 'GigaChat:Ultra'];
     if (!validModels.includes(default_gigachat_model)) {
       return res.status(400).json({ error: `Недопустимая модель. Допустимые: ${validModels.join(', ')}` });
     }

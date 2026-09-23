@@ -111,6 +111,7 @@ export function CallList({ calls, selectedCallId, onSelectCall }: CallListProps)
             <option value="GigaChat:Lite">GigaChat:Lite</option>
             <option value="GigaChat:Pro">GigaChat:Pro</option>
             <option value="GigaChat:Max">GigaChat:Max</option>
+            <option value="GigaChat:Ultra">GigaChat:Ultra</option>
           </select>
         </div>
         

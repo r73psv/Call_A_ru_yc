@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-export type ModelType = 'GigaChat:Lite' | 'GigaChat:Pro' | 'GigaChat:Max' | 'gemini' | 'gemini-lite' | 'openrouter' | 'routerai' | 'yandexgpt' | 'gigachat';
+export type ModelType = 'GigaChat:Lite' | 'GigaChat:Pro' | 'GigaChat:Max' | 'GigaChat:Ultra' | 'gemini' | 'gemini-lite' | 'openrouter' | 'routerai' | 'yandexgpt' | 'gigachat';
 
-export type GigaChatModel = 'GigaChat:Lite' | 'GigaChat:Pro' | 'GigaChat:Max';
+export type GigaChatModel = 'GigaChat:Lite' | 'GigaChat:Pro' | 'GigaChat:Max' | 'GigaChat:Ultra';
 
 export type UserRole = 'admin' | 'manager' | 'operator' | 'viewer';
 

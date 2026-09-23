@@ -31,6 +31,7 @@ export const ReanalyzeButton: React.FC<ReanalyzeButtonProps> = ({
     { id: 'GigaChat:Lite', label: 'Lite (Базовая)', desc: 'Быстрый анализ' },
     { id: 'GigaChat:Pro', label: 'Pro (Сложные диалоги)', desc: 'Глубокий разбор конфликтов' },
     { id: 'GigaChat:Max', label: 'Max (Флагман)', desc: 'Максимальная точность' },
+    { id: 'GigaChat:Ultra', label: 'Ultra (Reasoning)', desc: 'Глубокое рассуждение и аналитика' },
   ];
 
   const handleReanalyze = async (modelToUse: GigaChatModel) => {

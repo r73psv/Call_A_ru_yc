@@ -310,8 +310,8 @@ export function IntegrationsPanel({ config, onSaveConfig, userRole = 'admin' }: 
               <label className="block text-xs font-semibold text-slate-700 mb-1.5">
                 Базовая модель по умолчанию
               </label>
-              <div className="grid grid-cols-3 gap-2">
-                {(['GigaChat:Lite', 'GigaChat:Pro', 'GigaChat:Max'] as GigaChatModel[]).map((m) => (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {(['GigaChat:Lite', 'GigaChat:Pro', 'GigaChat:Max', 'GigaChat:Ultra'] as GigaChatModel[]).map((m) => (
                   <button
                     key={m}
                     type="button"
@@ -325,7 +325,13 @@ export function IntegrationsPanel({ config, onSaveConfig, userRole = 'admin' }: 
                   >
                     {m.replace('GigaChat:', '')}
                     <span className="block text-[10px] opacity-75 mt-0.5">
-                      {m === 'GigaChat:Lite' ? 'Базовая' : m === 'GigaChat:Pro' ? 'Сложные диалоги' : 'Флагман'}
+                      {m === 'GigaChat:Lite'
+                        ? 'Базовая'
+                        : m === 'GigaChat:Pro'
+                        ? 'Сложные диалоги'
+                        : m === 'GigaChat:Max'
+                        ? 'Флагман'
+                        : 'Ultra Reasoning'}
                     </span>
                   </button>
                 ))}

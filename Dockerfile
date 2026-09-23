@@ -1,40 +1,54 @@
+# ==============================================================================
+# Dockerfile: Remix CallQA AI_RU (Салон красоты «Лик 28»)
+# Multi-stage production container with 152-FZ encryption and Russian CA support
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
 # Stage 1: Build stage
-FROM node:20-alpine AS builder
+# Compiles Vite frontend SPA and bundles Express backend via esbuild -> dist/server.cjs
+# ------------------------------------------------------------------------------
+FROM node:22-alpine AS builder
 
 WORKDIR /app
 
-# Install build dependencies
+# Install build tools and timezone data
 RUN apk add --no-cache tzdata ca-certificates
 
-# Copy package manifests and install all dependencies
+# Copy package manifests and install all dependencies (including devDependencies)
 COPY package*.json ./
 RUN npm ci
 
-# Copy application source code and configurations
+# Copy application configuration and source code
 COPY tsconfig.json vite.config.ts index.html metadata.json ./
 COPY src ./src
 COPY server.ts ./
 
-# Build Vite frontend and bundle Express backend via esbuild -> dist/server.cjs
+# Compile frontend and backend in production mode with sufficient memory
+ENV NODE_ENV=production
+ENV NODE_OPTIONS=--max-old-space-size=2048
 RUN npm run build
 
+# ------------------------------------------------------------------------------
 # Stage 2: Production runner stage
-FROM node:20-alpine AS runner
+# Lightweight, hardened image with ffmpeg, Russian Trusted CA, and dumb-init
+# ------------------------------------------------------------------------------
+FROM node:22-alpine AS runner
 
 WORKDIR /app
 
-# Install runtime dependencies:
+# Install essential runtime dependencies:
 # - tzdata: Europe/Moscow timezone support
-# - wget & curl: Health checking, network inspection and debugging
-# - ffmpeg: Audio processing and format conversion for speech recognition
+# - dumb-init: Lightweight PID 1 init system for graceful signal handling (SIGTERM/SIGINT)
+# - wget & curl: Health checks, container probes, and debugging
+# - ffmpeg: Audio transcoding and format normalization for SpeechKit
 # - ca-certificates: TLS verification with Russian Trusted CA (Минцифры) for Sber GigaChat
-RUN apk add --no-cache tzdata wget curl ffmpeg ca-certificates && \
+RUN apk add --no-cache tzdata dumb-init wget curl ffmpeg ca-certificates && \
     mkdir -p /usr/local/share/ca-certificates/ && \
     (wget --no-check-certificate -qO /usr/local/share/ca-certificates/russian_trusted_root_ca.crt https://gu-st.ru/content/lending/russian_trusted_root_ca_pem.crt 2>/dev/null || true) && \
     (wget --no-check-certificate -qO /usr/local/share/ca-certificates/russian_trusted_sub_ca.crt https://gu-st.ru/content/lending/russian_trusted_sub_ca_pem.crt 2>/dev/null || true) && \
     update-ca-certificates 2>/dev/null || true
 
-# Production environment configuration
+# Production environment variables
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOST=0.0.0.0
@@ -43,37 +57,49 @@ ENV DATA_PATH=/app/data/data-store.json
 ENV DATA_PATH_ENC=/app/data/data-store.enc
 ENV CONSENT_PATH=/app/data/consents.enc
 ENV CONSENTS_PATH=/app/data/consents.enc
+ENV YC_FOLDER_ID=
 ENV YC_SERVICE_ACCOUNT_KEY_FILE=/app/keys/authorized_key.json
+ENV YC_STORAGE_BUCKET=
+ENV YC_STORAGE_ENDPOINT=https://storage.yandexcloud.net
+ENV YC_STORAGE_REGION=ru-central1
+ENV S3_ENDPOINT=https://s3.timeweb.cloud
+ENV S3_REGION=ru-1
+ENV S3_KEY_PREFIX=lik28/data/
+ENV S3_SYNC_INTERVAL_SEC=300
+ENV GIGACHAT_MODEL=GigaChat:Lite
+ENV GIGACHAT_SCOPE=GIGACHAT_API_PERS
 ENV NODE_OPTIONS=--max-old-space-size=2048
 ENV NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
 
-# Create directories for encrypted database, consents, keys, and temp buffers
+# Create required directories for persistent encrypted storage and key files
 RUN mkdir -p /app/keys /app/data /app/temp && \
     chown -R node:node /app/data /app/keys /app/temp && \
     chmod 700 /app/keys && \
     chmod 750 /app/data
 
-# Copy production package manifest and install only runtime dependencies
+# Copy package manifests and install only production dependencies
 COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
-# Copy compiled frontend and bundled CommonJS server from builder
+# Copy pre-compiled distribution assets from builder
 COPY --from=builder --chown=node:node /app/dist ./dist
 
-# Ensure proper permissions across the application directory
+# Ensure ownership across the whole application directory
 RUN chown -R node:node /app
 
-# Volume for durable encrypted store, audit logs, and consents (152-FZ)
-VOLUME ["/app/data"]
+# Volumes for persistent encrypted database (152-ФЗ) and credentials
+VOLUME ["/app/data", "/app/keys"]
 
+# Run as non-root user for security hardening
 USER node
 
+# Container listens strictly on port 3000
 EXPOSE 3000
 
-# Health check endpoint
+# Health check probe against Express /api/health
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/api/health || exit 1
 
-# Start the compiled CommonJS server
+# Launch using dumb-init for graceful termination and process reaping
+ENTRYPOINT ["/usr/bin/dumb-init", "--"]
 CMD ["node", "dist/server.cjs"]
-

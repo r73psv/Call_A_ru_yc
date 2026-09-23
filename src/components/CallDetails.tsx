@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
   AlertTriangle, Check, ShieldAlert, Star, 
   ThumbsUp, Volume2, MessageSquare, 
@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { CallRecord } from '../types.js';
 import { ReanalyzeButton } from './ReanalyzeButton.js';
+import { refineTranscriptRoles } from '../services/transcriptUtils.js';
 
 interface CallDetailsProps {
   call: CallRecord;
@@ -71,12 +72,42 @@ export function CallDetails({
   };
 
   const getOutcomeColor = (outcome: string) => {
-    if (outcome === 'успешно') return 'bg-green-100 text-green-800 border-green-200';
-    if (outcome === 'перенесён') return 'bg-blue-100 text-blue-800 border-blue-200';
-    return 'bg-red-100 text-red-800 border-red-200';
+    const o = (outcome || '').toLowerCase();
+    if (o === 'запись' || o === 'успешно') return 'bg-emerald-50 text-emerald-800 border-emerald-200';
+    if (o === 'консультация' || o === 'перезвон' || o === 'перенесён') return 'bg-blue-50 text-blue-800 border-blue-200';
+    if (o === 'отказ' || o === 'отмена') return 'bg-amber-50 text-amber-800 border-amber-200';
+    if (o === 'автоответчик') return 'bg-slate-100 text-slate-700 border-slate-200';
+    return 'bg-red-50 text-red-800 border-red-200';
   };
 
-  const parsedTranscriptLines = (call.transcript || '').split('\n').filter(line => line.trim().length > 0);
+  const parsedTranscriptLines = useMemo(() => {
+    if (!call.transcript) return [];
+    const refined = refineTranscriptRoles(call.transcript);
+    const lines = refined.split('\n').filter(line => line.trim().length > 0);
+
+    const clean: string[] = [];
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const textOnly = line
+        .replace(/^(Менеджер:|Клиент:|Администратор:|Оператор:|Неизвестный:)\s*/i, '')
+        .trim()
+        .toLowerCase();
+
+      if (clean.length > 0) {
+        const prevText = clean[clean.length - 1]
+          .replace(/^(Менеджер:|Клиент:|Администратор:|Оператор:|Неизвестный:)\s*/i, '')
+          .trim()
+          .toLowerCase();
+
+        // Если фраза идентична предыдущей (эхо двух каналов), пропускаем дубликат
+        if (textOnly === prevText && textOnly.length > 0) {
+          continue;
+        }
+      }
+      clean.push(line);
+    }
+    return clean;
+  }, [call.transcript]);
 
   const STATUS_DETAILS: Record<string, { title: string; badge: string; desc: string; colorClass: string }> = {
     missed: {

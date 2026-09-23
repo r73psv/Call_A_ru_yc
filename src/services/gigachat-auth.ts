@@ -5,6 +5,8 @@
 
 import axios from 'axios';
 import https from 'https';
+import { randomUUID } from 'crypto';
+import { readStoreSync } from '../store/store.js';
 
 let gigaTokenCache: { token: string; expiresAt: number } | null = null;
 
@@ -14,29 +16,57 @@ const httpsAgent = new https.Agent({
   rejectUnauthorized: false,
 });
 
+export function getEffectiveGigaChatKey(): string {
+  try {
+    const store = readStoreSync();
+    if (store.config?.credentials?.gigachatAuthKey) {
+      return store.config.credentials.gigachatAuthKey;
+    }
+  } catch (e) {
+    // Ignore store read issues and fallback to env
+  }
+  return process.env.GIGACHAT_AUTH_KEY || '';
+}
+
+export function getEffectiveGigaChatScope(): string {
+  try {
+    const store = readStoreSync();
+    if (store.config?.credentials?.gigachatScope) {
+      return store.config.credentials.gigachatScope;
+    }
+  } catch (e) {
+    // Ignore
+  }
+  return process.env.GIGACHAT_SCOPE || 'GIGACHAT_API_PERS';
+}
+
 export async function getGigaChatToken(): Promise<string> {
   const now = Date.now();
   if (gigaTokenCache && gigaTokenCache.expiresAt - now > 60000) {
     return gigaTokenCache.token;
   }
 
-  const authKey = process.env.GIGACHAT_AUTH_KEY;
+  const authKey = getEffectiveGigaChatKey();
   if (!authKey) {
-    throw new Error('GIGACHAT_AUTH_KEY не задан в .env');
+    throw new Error('GIGACHAT_AUTH_KEY не задан в настройках админ-панели или .env');
   }
 
   const formattedAuth = authKey.startsWith('Basic ') || authKey.startsWith('Bearer ')
     ? authKey
     : `Basic ${authKey}`;
 
+  const scope = getEffectiveGigaChatScope();
+  const oauthUrl = 'https://ngw.devices.sberbank.ru:9443/api/v2/oauth';
+
   const res = await axios.post(
-    'https://ngfg.services.gigachat-api.ru/api/v1/oauth',
-    'scope=GIGACHAT_API_PERS',
+    oauthUrl,
+    `scope=${encodeURIComponent(scope)}`,
     {
       headers: {
         Authorization: formattedAuth,
         'Content-Type': 'application/x-www-form-urlencoded',
-        RqUID: `lik28-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+        Accept: 'application/json',
+        RqUID: randomUUID(),
       },
       httpsAgent,
       timeout: 20000,
@@ -63,5 +93,6 @@ export function invalidateGigaChatTokenCache(): void {
 }
 
 export function isGigaChatConfigured(): boolean {
-  return !!process.env.GIGACHAT_AUTH_KEY && process.env.GIGACHAT_AUTH_KEY !== '<ключ-авторизации-GigaChat>';
+  const key = getEffectiveGigaChatKey();
+  return !!key && key !== '<ключ-авторизации-GigaChat>';
 }

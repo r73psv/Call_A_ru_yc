@@ -7,7 +7,8 @@ import * as fs from 'fs/promises';
 import { existsSync, mkdirSync, readFileSync } from 'fs';
 import path from 'path';
 import { encrypt, decrypt } from './crypto-store.js';
-import { CallRecord, LogEntry, SystemConfig, AccessLogEntry } from '../types.js';
+import { CallRecord, LogEntry, SystemConfig, AccessLogEntry, User } from '../types.js';
+import { getInitialUsers } from './user-store.js';
 
 const DATA_PATH_ENC = process.env.DATA_PATH_ENC || path.join(process.cwd(), 'data', 'data-store.enc');
 const DATA_PATH_JSON = process.env.DATA_PATH || path.join(process.cwd(), 'data', 'data-store.json');
@@ -17,6 +18,7 @@ export interface AppDatabase {
   calls: CallRecord[];
   logs: LogEntry[];
   access_log?: AccessLogEntry[];
+  users?: User[];
   config: SystemConfig;
 }
 
@@ -141,6 +143,9 @@ export function readStoreSync(): AppDatabase {
       if (payload && payload.encrypted && payload.iv && payload.tag) {
         const decryptedStr = decrypt(payload);
         const parsed: AppDatabase = JSON.parse(decryptedStr);
+        if (!parsed.users || parsed.users.length === 0) {
+          parsed.users = getInitialUsers();
+        }
         memCache = parsed;
         return memCache;
       }
@@ -155,6 +160,9 @@ export function readStoreSync(): AppDatabase {
       const raw = readFileSync(legacyPath, 'utf-8');
       const parsed: AppDatabase = JSON.parse(raw);
       if (parsed && Array.isArray(parsed.calls)) {
+        if (!parsed.users || parsed.users.length === 0) {
+          parsed.users = getInitialUsers();
+        }
         memCache = parsed;
         return memCache;
       }
@@ -175,6 +183,7 @@ export function readStoreSync(): AppDatabase {
       },
     ],
     access_log: [],
+    users: getInitialUsers(),
     config: DEFAULT_CONFIG,
   };
 
@@ -197,6 +206,9 @@ export async function readStore(): Promise<AppDatabase> {
       if (payload && payload.encrypted && payload.iv && payload.tag) {
         const decryptedStr = decrypt(payload);
         const parsed: AppDatabase = JSON.parse(decryptedStr);
+        if (!parsed.users || parsed.users.length === 0) {
+          parsed.users = getInitialUsers();
+        }
         memCache = parsed;
         return memCache;
       }
@@ -212,6 +224,9 @@ export async function readStore(): Promise<AppDatabase> {
       const raw = readFileSync(legacyPath, 'utf-8');
       const parsed: AppDatabase = JSON.parse(raw);
       if (parsed && Array.isArray(parsed.calls)) {
+        if (!parsed.users || parsed.users.length === 0) {
+          parsed.users = getInitialUsers();
+        }
         console.log(`[Store] Миграция открытого ${legacyPath} в зашифрованный data-store.enc (152-ФЗ)...`);
         memCache = parsed;
         await writeStore(memCache);
@@ -235,6 +250,7 @@ export async function readStore(): Promise<AppDatabase> {
       },
     ],
     access_log: [],
+    users: getInitialUsers(),
     config: DEFAULT_CONFIG,
   };
 

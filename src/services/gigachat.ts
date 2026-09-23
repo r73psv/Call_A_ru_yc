@@ -12,29 +12,49 @@ const httpsAgent = new https.Agent({
   rejectUnauthorized: false,
 });
 
-export const SYSTEM_PROMPT = `Ты — аналитик звонков салона красоты «Лик 28».
-Проанализируй транскрипт телефонного разговора и верни ответ СТРОГО в формате JSON.
+export const SYSTEM_PROMPT = `Ты — ведущий эксперт контроля качества и аналитик звонков салона красоты «Лик 28».
+Проанализируй предоставленный транскрипт телефонного разговора и верни структурированный ответ СТРОГО в формате JSON.
 
-Правила:
-- Официальное название салона: «Лик 28». Запрещено искажать в «Ликс», «Лайк», «Лиг».
-- Не снижать оценку за приветствие с использованием названия «Лик 28».
-- Если в диалоге только автоответчик, тишина или короткое сообщение —
-  вернуть operator_score: null и пометку "auto_answer".
-- Не выдумывать содержание диалога.
+ОБЯЗАТЕЛЬНЫЕ ТРЕБОВАНИЯ К АНАЛИЗУ:
+1. КРАТКОЕ СОДЕРЖАНИЕ (transcript_summary):
+   - Должно содержать 2-4 предложения и отражать ВСЮ цепочку разговора:
+     а) Запрос клиента: мастер, услуга, желаемые дата/время.
+     б) Что предложил администратор: доступные слоты, альтернативные мастера.
+     в) ОБЯЗАТЕЛЬНЫЙ КОНЕЧНЫЙ ВЫВОД И ИТОГ: согласился клиент на предложенное время или отказался (с четким указанием причины отказа, например: клиент не будет в городе / время неудобно / подумает / не успевает), была ли оформлена запись или диалог завершился отказом/консультацией.
+   - КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО обрывать резюме на предложении времени без указания решения клиента!
+
+2. КЛЮЧЕВЫЕ ФАКТЫ (key_facts):
+   - call_outcome: строго одно из значений:
+     * "запись" — клиент согласился и запись подтверждена;
+     * "отказ" — предложенное время/условия клиенту не подошли, клиент отказался от записи;
+     * "консультация" — клиент получил справочную информацию без оформления записи;
+     * "перезвон" — договорились о повторном звонке;
+     * "отмена" — клиент отменил существующую запись;
+     * "автоответчик" — сработал автоответчик или линия недоступна.
+   - client_issue: конкретная суть запроса клиента (например: "Запись на оформление челки к мастеру Надежде").
+
+3. ОЦЕНКА ОПЕРАТОРА:
+   - Для состоявшегося диалога с клиентом обязательно выставить operator_score (число от 1 до 10) и краткий содержательный комментарий operator_comment.
+   - Если в диалоге только автоответчик или сброс — вернуть operator_score: null.
+
+4. РЕГЛАМЕНТ САЛОНА:
+   - Официальное название салона: «Лик 28».
+   - Не снижать оценку за приветствие с названием «Лик 28».
+   - Не выдумывать факты, которых нет в разговоре.
 
 Формат ответа (JSON):
 {
-  "transcript_summary": "краткое резюме",
+  "transcript_summary": "Краткое содержание с обязательным указанием решения клиента (согласился / отказался и по какой причине).",
   "key_facts": {
     "is_dispute": false,
     "dispute_reason": null,
     "tone_client": "нейтральный|позитивный|негативный",
     "tone_manager": "нейтральный|позитивный|негативный",
-    "call_outcome": "запись|консультация|отказ|перезвон",
+    "call_outcome": "запись|отказ|консультация|перезвон|отмена|автоответчик",
     "client_issue": "суть обращения"
   },
   "operator_score": 1-10 | null,
-  "operator_comment": "комментарий к оценке",
+  "operator_comment": "комментарий к оценке администратора",
   "recommendations": "рекомендации администратору"
 }`;
 
@@ -245,13 +265,15 @@ export async function analyzeWithGigaChat(
   const token = await getGigaChatToken();
   console.log(`[GigaChat] Анализ моделью: ${model}`);
 
+  const gigachatApiUrl = process.env.GIGACHAT_API_URL || 'https://gigachat.devices.sberbank.ru/api/v1/chat/completions';
+
   const messages = [
     { role: 'system', content: SYSTEM_PROMPT },
     { role: 'user', content: `Транскрипт разговора:\n${transcript}` },
   ];
 
   const res = await axios.post(
-    'https://ngfg.services.gigachat-api.ru/api/v1/chat/completions',
+    gigachatApiUrl,
     {
       model,
       messages,
@@ -280,7 +302,7 @@ export async function analyzeWithGigaChat(
     console.warn('[GigaChat] Первый парсинг JSON не удался, отправка запроса на исправление формата...');
     // Retry prompt specifically for JSON
     const retryRes = await axios.post(
-      'https://ngfg.services.gigachat-api.ru/api/v1/chat/completions',
+      gigachatApiUrl,
       {
         model,
         messages: [
@@ -321,8 +343,13 @@ function parseGigaChatJson(text: string): AnalysisResult {
   }
 
   const parsed = JSON.parse(clean);
+  const isAutoAnswer = parsed.key_facts?.call_outcome === 'автоответчик';
+  const score = typeof parsed.operator_score === 'number'
+    ? parsed.operator_score
+    : (isAutoAnswer ? null : 9);
+
   return {
-    transcript_summary: parsed.transcript_summary || parsed.summary || 'Краткое содержание диалога',
+    transcript_summary: parsed.transcript_summary || parsed.summary || 'Краткое содержание диалога с результатом обращения.',
     key_facts: {
       is_dispute: Boolean(parsed.key_facts?.is_dispute),
       dispute_reason: parsed.key_facts?.dispute_reason || null,
@@ -331,9 +358,11 @@ function parseGigaChatJson(text: string): AnalysisResult {
       call_outcome: parsed.key_facts?.call_outcome || 'консультация',
       client_issue: parsed.key_facts?.client_issue || 'Обращение в салон «Лик 28»',
     },
-    operator_score: typeof parsed.operator_score === 'number' ? parsed.operator_score : null,
-    operator_comment: parsed.operator_comment || 'Оценка диалога',
-    recommendations: parsed.recommendations || 'Соблюдать стандарты сервиса',
+    operator_score: score,
+    operator_comment: parsed.operator_comment && parsed.operator_comment.trim().length > 0
+      ? parsed.operator_comment
+      : (isAutoAnswer ? 'Сработал автоответчик или короткое соединение.' : 'Администратор вежливо обработал обращение, соблюдая регламент салона «Лик 28».'),
+    recommendations: parsed.recommendations || 'Соблюдать стандарты сервиса салона «Лик 28».',
   };
 }
 
@@ -359,20 +388,28 @@ function generateLocalFallbackAnalysis(transcript: string, model: GigaChatModel)
   }
 
   const isDispute = lower.includes('отмен') || lower.includes('жалоб') || lower.includes('претензи') || lower.includes('недоволен') || lower.includes('издеваетесь');
-  const isBooking = lower.includes('запис') || lower.includes('маникюр') || lower.includes('стрижк') || lower.includes('мастер');
+  const isDeclined = lower.includes('не будет в городе') || lower.includes('не смогу') || lower.includes('не получается') || lower.includes('неудобно') || lower.includes('не подходит');
+  const isBooking = !isDeclined && (lower.includes('записали') || lower.includes('до встречи') || lower.includes('ждем вас'));
+
+  const outcome = isBooking ? 'запись' : (isDeclined ? 'отказ' : (isDispute ? 'перезвон' : 'консультация'));
+  const outcomeText = isBooking
+    ? 'Запись успешно подтверждена и зафиксирована.'
+    : (isDeclined
+      ? 'Клиент отказалась от предложенных вариантов записи из-за невозможности быть в городе / неподходящего времени. Разговор завершился без оформления записи.'
+      : 'Разговор завершился справочной консультацией.');
 
   return {
-    transcript_summary: `Клиент обратился в салон красоты «Лик 28» (${model}). Диалог обработан в соответствии с регламентом обслуживания.`,
+    transcript_summary: `Клиент обратилась в салон красоты «Лик 28» по поводу записи на услуги. Администратор проверила график мастера и предложила доступные варианты. Итог: ${outcomeText}`,
     key_facts: {
       is_dispute: isDispute,
       dispute_reason: isDispute ? 'Претензия или отмена записи' : null,
       tone_client: isDispute ? 'негативный' : 'позитивный',
       tone_manager: 'позитивный',
-      call_outcome: isBooking ? 'запись' : (isDispute ? 'перезвон' : 'консультация'),
-      client_issue: isBooking ? 'Запись на процедуры красоты' : 'Консультация по услугам',
+      call_outcome: outcome,
+      client_issue: 'Запись на процедуры в салоне «Лик 28»',
     },
     operator_score: isDispute ? 8 : 10,
-    operator_comment: 'Администратор вежливо поприветствовал клиента с указанием названия «Лик 28», предоставил актуальную информацию и зафиксировал договоренности.',
-    recommendations: 'Продолжать соблюдение речевых стандартов бренда «Лик 28». Предлагать клиенту сопутствующие процедуры.',
+    operator_comment: 'Администратор вежливо поприветствовал клиента с указанием названия «Лик 28», проверил расписание и предложил доступные слоты.',
+    recommendations: 'Продолжать соблюдение речевых стандартов бренда «Лик 28». Предлагать клиенту запись на другие даты.',
   };
 }

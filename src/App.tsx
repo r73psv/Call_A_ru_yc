@@ -8,25 +8,58 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   PhoneCall, Settings, Terminal, Activity, RefreshCw, 
   ShieldAlert, AlertCircle, HardDrive, Shield, ShieldCheck,
-  Lock, UserCheck, HeartHandshake, Bot, Sparkles, CheckCircle2
+  Lock, Unlock, UserCheck, HeartHandshake, Bot, Sparkles, 
+  CheckCircle2, LogOut, User, Key, KeyRound
 } from 'lucide-react';
 
 import { StatsGrid } from './components/StatsGrid.js';
 import { CallList } from './components/CallList.js';
 import { CallDetails } from './components/CallDetails.js';
 import { MegafonSimulator } from './components/MegafonSimulator.js';
-import { IntegrationsPanel } from './components/IntegrationsPanel.js';
 import { LogsViewer } from './components/LogsViewer.js';
 import { RecordingNotice } from './components/RecordingNotice.js';
 import { ConsentsTable } from './components/ConsentsTable.js';
 import { ModelSelector } from './components/ModelSelector.js';
+import { LoginModal } from './components/LoginModal.js';
+import { AdminPasswordPromptModal } from './components/AdminPasswordPromptModal.js';
+import { AdminPanel } from './components/AdminPanel.js';
 
-import { CallRecord, DashboardStats, SystemConfig, LogEntry, GigaChatModel } from './types.js';
+import { CallRecord, DashboardStats, SystemConfig, LogEntry, GigaChatModel, UserRole } from './types.js';
 
-async function safeFetchJson<T = any>(url: string, options?: RequestInit, retries = 3, delay = 1000): Promise<T> {
+interface CurrentUserInfo {
+  id: string;
+  username: string;
+  name: string;
+  role: UserRole;
+}
+
+async function safeFetchJson<T = any>(
+  url: string, 
+  options?: RequestInit, 
+  authToken?: string | null,
+  userRole?: UserRole,
+  retries = 3, 
+  delay = 1000
+): Promise<T> {
+  const headers: Record<string, string> = {
+    ...(options?.headers as Record<string, string> || {}),
+  };
+
+  if (authToken) {
+    headers['Authorization'] = `Bearer ${authToken}`;
+  }
+  if (userRole) {
+    headers['x-user-role'] = userRole;
+  }
+
+  const reqOptions: RequestInit = {
+    ...options,
+    headers,
+  };
+
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      const response = await fetch(url, options);
+      const response = await fetch(url, reqOptions);
       if (!response.ok) {
         if (response.status >= 500 && attempt < retries) {
           await new Promise(resolve => setTimeout(resolve, delay));
@@ -73,34 +106,49 @@ export default function App() {
   const [selectedCallId, setSelectedCallId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'list' | 'details' | 'consents' | 'simulator' | 'config' | 'logs'>('list');
+  const [activeTab, setActiveTab] = useState<'list' | 'details' | 'consents' | 'simulator' | 'admin' | 'logs'>('list');
 
-  // Role based access: admin, manager, viewer
-  const [userRole, setUserRole] = useState<'admin' | 'manager' | 'viewer'>(() => {
-    return (localStorage.getItem('callqa_user_role') as any) || 'admin';
+  // Auth & Session state
+  const [authToken, setAuthToken] = useState<string | null>(() => {
+    return localStorage.getItem('callqa_auth_token') || null;
   });
 
-  const handleRoleChange = (newRole: 'admin' | 'manager' | 'viewer') => {
-    setUserRole(newRole);
-    localStorage.setItem('callqa_user_role', newRole);
-  };
+  const [currentUser, setCurrentUser] = useState<CurrentUserInfo | null>(() => {
+    try {
+      const saved = localStorage.getItem('callqa_user_info');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    // Default fallback to admin for first launch
+    return {
+      id: 'usr-admin-1',
+      username: 'admin',
+      name: 'Главный Администратор',
+      role: 'admin',
+    };
+  });
+
+  const userRole: UserRole = currentUser?.role || 'admin';
+
+  // Admin gate protection
+  const [isAdminUnlocked, setIsAdminUnlocked] = useState(false);
+  const [isAdminPasswordModalOpen, setIsAdminPasswordModalOpen] = useState(false);
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState(() => !localStorage.getItem('callqa_auth_token'));
 
   // Synchronize state with backend APIs
   const loadData = async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const headers = { 'x-user-role': userRole };
       const [callsData, statsData, configData, logsData] = await Promise.all([
-        safeFetchJson<CallRecord[]>('/api/calls', { headers }),
-        safeFetchJson<DashboardStats>('/api/stats', { headers }),
-        safeFetchJson<SystemConfig>('/api/config', { headers }),
-        safeFetchJson<LogEntry[]>('/api/logs', { headers })
+        safeFetchJson<CallRecord[]>('/api/calls', {}, authToken, userRole),
+        safeFetchJson<DashboardStats>('/api/stats', {}, authToken, userRole),
+        safeFetchJson<SystemConfig>('/api/config', {}, authToken, userRole),
+        safeFetchJson<LogEntry[]>('/api/logs', {}, authToken, userRole).catch(() => [])
       ]);
 
       setCalls(callsData);
       setStats(statsData);
       setConfig(configData);
-      setLogs(logsData);
+      setLogs(logsData || []);
 
       if (callsData.length > 0 && !selectedCallId) {
         setSelectedCallId(callsData[0].call_id);
@@ -120,23 +168,55 @@ export default function App() {
       loadData(true);
     }, 10000);
     return () => clearInterval(timer);
-  }, [selectedCallId, userRole]);
+  }, [selectedCallId, userRole, authToken]);
 
-  const handleSaveConfig = async (newConfig: SystemConfig) => {
-    try {
-      const updated = await safeFetchJson<SystemConfig>('/api/config', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'x-user-role': userRole,
-        },
-        body: JSON.stringify(newConfig)
-      });
-      setConfig(updated);
-      await loadData(true);
-    } catch (err: any) {
-      alert(`Ошибка обновления конфигурации: ${err.message}`);
+  const handleLoginSuccess = (user: CurrentUserInfo, token: string) => {
+    setCurrentUser(user);
+    setAuthToken(token);
+    setIsLoginModalOpen(false);
+    // Reset admin lock on user change
+    setIsAdminUnlocked(false);
+    if (user.role !== 'admin' && activeTab === 'admin') {
+      setActiveTab('list');
     }
+    loadData();
+  };
+
+  const handleLogout = async () => {
+    try {
+      if (authToken) {
+        await fetch('/api/auth/logout', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${authToken}` },
+        });
+      }
+    } catch {}
+    localStorage.removeItem('callqa_auth_token');
+    localStorage.removeItem('callqa_user_info');
+    localStorage.removeItem('callqa_user_role');
+    setAuthToken(null);
+    setCurrentUser(null);
+    setIsAdminUnlocked(false);
+    setIsLoginModalOpen(true);
+  };
+
+  const handleOpenAdminTab = () => {
+    if (userRole !== 'admin') {
+      alert('Доступ в панель администратора разрешен только пользователям с ролью «Администратор»');
+      return;
+    }
+
+    if (!isAdminUnlocked) {
+      setIsAdminPasswordModalOpen(true);
+    } else {
+      setActiveTab('admin');
+    }
+  };
+
+  const handleAdminPasswordSuccess = () => {
+    setIsAdminUnlocked(true);
+    setIsAdminPasswordModalOpen(false);
+    setActiveTab('admin');
   };
 
   const handleModelChange = async (newModel: GigaChatModel) => {
@@ -144,12 +224,9 @@ export default function App() {
     try {
       await safeFetchJson('/api/settings', {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-user-role': userRole,
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ default_gigachat_model: newModel }),
-      });
+      }, authToken, userRole);
       if (config) {
         setConfig({
           ...config,
@@ -174,12 +251,9 @@ export default function App() {
     try {
       const result = await safeFetchJson<any>('/api/calls/simulate-webhook', {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'x-user-role': userRole,
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
-      });
+      }, authToken, userRole);
       
       if (result.call_id) {
         setSelectedCallId(result.call_id);
@@ -195,8 +269,7 @@ export default function App() {
     try {
       const result = await safeFetchJson<any>(`/api/calls/${id}/send-vk`, { 
         method: 'POST',
-        headers: { 'x-user-role': userRole },
-      });
+      }, authToken, userRole);
       await loadData(true);
       return result;
     } catch (err: any) {
@@ -208,8 +281,7 @@ export default function App() {
     try {
       const result = await safeFetchJson<any>(`/api/calls/${id}/send-yclients`, { 
         method: 'POST',
-        headers: { 'x-user-role': userRole },
-      });
+      }, authToken, userRole);
       await loadData(true);
       return result.success;
     } catch (err) {
@@ -221,12 +293,9 @@ export default function App() {
     try {
       const updated = await safeFetchJson<CallRecord>(`/api/calls/${id}/reanalyze`, { 
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'x-user-role': userRole,
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: config?.default_gigachat_model || 'GigaChat:Lite' })
-      });
+      }, authToken, userRole);
       setCalls(prev => prev.map(c => c.call_id === id ? updated : c));
       await loadData(true);
       return true;
@@ -241,8 +310,7 @@ export default function App() {
     try {
       await safeFetchJson('/api/logs', { 
         method: 'DELETE',
-        headers: { 'x-user-role': userRole },
-      });
+      }, authToken, userRole);
       setLogs([]);
     } catch (err: any) {
       alert(`Ошибка очистки логов: ${err.message}`);
@@ -250,6 +318,32 @@ export default function App() {
   };
 
   const selectedCall = calls.find(c => c.call_id === selectedCallId);
+
+  const getRoleBadgeStyle = (role: UserRole) => {
+    switch (role) {
+      case 'admin':
+        return 'bg-red-50 text-red-700 border-red-200';
+      case 'manager':
+        return 'bg-blue-50 text-blue-700 border-blue-200';
+      case 'operator':
+        return 'bg-purple-50 text-purple-700 border-purple-200';
+      case 'viewer':
+        return 'bg-slate-100 text-slate-700 border-slate-200';
+    }
+  };
+
+  const getRoleLabel = (role: UserRole) => {
+    switch (role) {
+      case 'admin':
+        return '👑 Администратор';
+      case 'manager':
+        return '👔 Управляющий';
+      case 'operator':
+        return '🎧 Оператор';
+      case 'viewer':
+        return '👁️ Наблюдатель';
+    }
+  };
 
   return (
     <div className="min-h-screen bg-slate-50/70 flex flex-col text-slate-800" id="applet-viewport">
@@ -273,7 +367,7 @@ export default function App() {
                 </span>
               </div>
               <p className="text-[11px] text-slate-500">
-                SpeechKit ролевой + GigaChat (Сбер) + Шифрование AES-256-GCM
+                SpeechKit ролевой + GigaChat (Сбер) + Шифрование AES-256-GCM + RBAC доступ
               </p>
             </div>
           </div>
@@ -290,31 +384,38 @@ export default function App() {
               />
             </div>
 
-            {/* Role Switcher */}
-            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200 text-xs">
-              <UserCheck className="w-3.5 h-3.5 text-slate-500 ml-1" />
-              {(['admin', 'manager', 'viewer'] as const).map((r) => (
+            {/* Current Authenticated User Badge & Logout */}
+            {currentUser && (
+              <div className="flex items-center gap-2 bg-slate-50 border border-slate-200/90 rounded-xl px-2.5 py-1 text-xs">
+                <div className="flex items-center gap-1.5">
+                  <User className="w-3.5 h-3.5 text-slate-500" />
+                  <span className="font-bold text-slate-800">{currentUser.name}</span>
+                </div>
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${getRoleBadgeStyle(currentUser.role)}`}>
+                  {getRoleLabel(currentUser.role)}
+                </span>
                 <button
-                  key={r}
                   type="button"
-                  onClick={() => handleRoleChange(r)}
-                  className={`px-2 py-0.5 rounded text-[11px] font-medium transition-all ${
-                    userRole === r
-                      ? 'bg-white text-slate-900 shadow-2xs font-bold'
-                      : 'text-slate-500 hover:text-slate-800'
-                  }`}
-                  title={
-                    r === 'admin'
-                      ? 'Администратор: полный доступ к ПДн, настройкам и расшифровкам'
-                      : r === 'manager'
-                      ? 'Управляющий: оценки, резюме и флаги конфликтов (без транскриптов по 152-ФЗ)'
-                      : 'Наблюдатель: только агрегированная статистика'
-                  }
+                  onClick={handleLogout}
+                  className="p-1 hover:bg-slate-200 text-slate-500 hover:text-slate-800 rounded-md transition-colors"
+                  title="Выйти / Сменить пользователя"
+                  id="user-logout-btn"
                 >
-                  {r === 'admin' ? 'Админ' : r === 'manager' ? 'Управляющий' : 'Наблюдатель'}
+                  <LogOut className="w-3.5 h-3.5" />
                 </button>
-              ))}
-            </div>
+              </div>
+            )}
+
+            {/* Quick Login button if not logged in */}
+            {!currentUser && (
+              <button
+                type="button"
+                onClick={() => setIsLoginModalOpen(true)}
+                className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-xs transition-colors"
+              >
+                Войти по паролю
+              </button>
+            )}
 
             <button
               onClick={() => loadData(true)}
@@ -349,6 +450,25 @@ export default function App() {
               className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-semibold text-xs transition-colors shrink-0"
             >
               Повторить попытку
+            </button>
+          </div>
+        )}
+
+        {/* Role Warning / Notice */}
+        {userRole !== 'admin' && (
+          <div className="bg-blue-50/70 border border-blue-200 rounded-xl p-3 flex items-center justify-between text-xs text-blue-900">
+            <div className="flex items-center gap-2">
+              <Shield className="w-4 h-4 text-blue-600 shrink-0" />
+              <span>
+                <strong>Режим ограниченного доступа ({getRoleLabel(userRole)}):</strong> Персональные данные маскированы в соответствии со статьей 7 Федерального закона № 152-ФЗ.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsLoginModalOpen(true)}
+              className="text-[11px] font-bold text-blue-700 hover:underline shrink-0"
+            >
+              Сменить роль
             </button>
           </div>
         )}
@@ -397,41 +517,59 @@ export default function App() {
               <ShieldCheck className="w-4 h-4" /> Реестр согласий (152-ФЗ)
             </button>
 
-            <button
-              id="tab-btn-simulator"
-              onClick={() => setActiveTab('simulator')}
-              className={`px-5 py-3.5 text-xs font-bold border-b-2 transition-all flex items-center gap-2 ${
-                activeTab === 'simulator'
-                  ? 'border-emerald-600 text-emerald-700 bg-white'
-                  : 'border-transparent text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              <Bot className="w-4 h-4" /> Симулятор АТС Мегафон
-            </button>
+            {(userRole === 'admin' || userRole === 'manager') && (
+              <button
+                id="tab-btn-simulator"
+                onClick={() => setActiveTab('simulator')}
+                className={`px-5 py-3.5 text-xs font-bold border-b-2 transition-all flex items-center gap-2 ${
+                  activeTab === 'simulator'
+                    ? 'border-emerald-600 text-emerald-700 bg-white'
+                    : 'border-transparent text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                <Bot className="w-4 h-4" /> Симулятор АТС Мегафон
+              </button>
+            )}
 
-            <button
-              id="tab-btn-config"
-              onClick={() => setActiveTab('config')}
-              className={`px-5 py-3.5 text-xs font-bold border-b-2 transition-all flex items-center gap-2 ${
-                activeTab === 'config'
-                  ? 'border-emerald-600 text-emerald-700 bg-white'
-                  : 'border-transparent text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              <Settings className="w-4 h-4" /> Интеграции & 152-ФЗ
-            </button>
+            {/* Protected Admin Panel Tab */}
+            {userRole === 'admin' && (
+              <button
+                id="tab-btn-admin"
+                onClick={handleOpenAdminTab}
+                className={`px-5 py-3.5 text-xs font-bold border-b-2 transition-all flex items-center gap-2 ${
+                  activeTab === 'admin'
+                    ? 'border-amber-600 text-amber-800 bg-amber-50/50'
+                    : 'border-transparent text-slate-600 hover:text-amber-800'
+                }`}
+              >
+                {isAdminUnlocked ? (
+                  <Unlock className="w-4 h-4 text-emerald-600" />
+                ) : (
+                  <Lock className="w-4 h-4 text-amber-600" />
+                )}
+                <span>Панель администратора</span>
+                {!isAdminUnlocked && (
+                  <span className="text-[10px] bg-amber-100 text-amber-800 font-bold px-1.5 py-0.2 rounded-md">
+                    Пароль
+                  </span>
+                )}
+              </button>
+            )}
 
-            <button
-              id="tab-btn-logs"
-              onClick={() => setActiveTab('logs')}
-              className={`px-5 py-3.5 text-xs font-bold border-b-2 transition-all flex items-center gap-2 ${
-                activeTab === 'logs'
-                  ? 'border-emerald-600 text-emerald-700 bg-white'
-                  : 'border-transparent text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              <Terminal className="w-4 h-4" /> Журнал доступа к ПДн ({logs.length})
-            </button>
+            {/* Audit Logs Tab (for admin only) */}
+            {userRole === 'admin' && (
+              <button
+                id="tab-btn-logs"
+                onClick={() => setActiveTab('logs')}
+                className={`px-5 py-3.5 text-xs font-bold border-b-2 transition-all flex items-center gap-2 ${
+                  activeTab === 'logs'
+                    ? 'border-emerald-600 text-emerald-700 bg-white'
+                    : 'border-transparent text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                <Terminal className="w-4 h-4" /> Журнал аудита ({logs.length})
+              </button>
+            )}
           </div>
 
           {/* Active Tab Workspace Panel */}
@@ -521,23 +659,26 @@ export default function App() {
                 </motion.div>
               )}
 
-              {activeTab === 'config' && config && (
+              {/* Admin Panel (Tokens, Users, Passwords) */}
+              {activeTab === 'admin' && userRole === 'admin' && (
                 <motion.div
-                  key="tab-workspace-config"
+                  key="tab-workspace-admin"
                   initial={{ opacity: 0, y: 5 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -5 }}
                   transition={{ duration: 0.12 }}
                 >
-                  <IntegrationsPanel 
-                    config={config} 
-                    onSaveConfig={handleSaveConfig} 
-                    userRole={userRole}
+                  <AdminPanel
+                    authToken={authToken}
+                    currentUserId={currentUser?.id}
+                    adminUsername={currentUser?.username}
+                    logs={logs}
+                    onClearLogs={handleClearLogs}
                   />
                 </motion.div>
               )}
 
-              {activeTab === 'logs' && (
+              {activeTab === 'logs' && userRole === 'admin' && (
                 <motion.div
                   key="tab-workspace-logs"
                   initial={{ opacity: 0, y: 5 }}
@@ -558,6 +699,20 @@ export default function App() {
 
       </main>
 
+      {/* Login Modal */}
+      <LoginModal
+        isOpen={isLoginModalOpen}
+        onLoginSuccess={handleLoginSuccess}
+      />
+
+      {/* Admin Gate Master Password Prompt Modal */}
+      <AdminPasswordPromptModal
+        isOpen={isAdminPasswordModalOpen}
+        authToken={authToken}
+        onSuccess={handleAdminPasswordSuccess}
+        onCancel={() => setIsAdminPasswordModalOpen(false)}
+      />
+
       {/* Footer */}
       <footer className="bg-white border-t border-slate-200 py-4 text-center text-xs text-slate-500 mt-auto" id="applet-main-footer">
         <div className="max-w-7xl mx-auto px-6 flex flex-col sm:flex-row justify-between items-center gap-2">
@@ -568,6 +723,8 @@ export default function App() {
             </span>
             <span>•</span>
             <span>SpeechKit + GigaChat</span>
+            <span>•</span>
+            <span className="text-amber-700">Admin RBAC Gate</span>
           </div>
         </div>
       </footer>

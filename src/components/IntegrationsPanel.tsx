@@ -135,12 +135,19 @@ export function IntegrationsPanel({ config, onSaveConfig, userRole = 'admin' }: 
     setPollNowResult(null);
     try {
       const res = await fetch('/api/calls/fetch-poll', { method: 'POST' });
-      const data = await res.json();
-      if (data.success) {
-        setPollNowResult(`Опрос выполнен! Найдено звонков: ${data.imported}`);
+      const text = await res.text();
+      let data: any = {};
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        throw new Error(res.ok ? 'Некорректный формат ответа сервера' : `Ошибка сервера (${res.status}): ${text.slice(0, 120)}`);
+      }
+
+      if (res.ok && data.success) {
+        setPollNowResult(`Опрос выполнен! Найдено звонков: ${data.imported ?? data.importedCount ?? 0}`);
         setTimeout(() => window.location.reload(), 1500);
       } else {
-        setPollNowResult('Ошибка опроса АТС');
+        setPollNowResult(`Ошибка: ${data.error || 'Ошибка опроса АТС'}`);
       }
     } catch (err: any) {
       setPollNowResult(`Ошибка: ${err.message || err}`);
@@ -158,9 +165,16 @@ export function IntegrationsPanel({ config, onSaveConfig, userRole = 'admin' }: 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ from: fromDate, to: toDate })
       });
-      const data = await res.json();
-      if (data.success) {
-        setSyncPeriodResult(data.message);
+      const text = await res.text();
+      let data: any = {};
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        throw new Error(res.ok ? 'Некорректный формат ответа сервера' : `Ошибка сервера (${res.status}): ${text.slice(0, 120)}`);
+      }
+
+      if (res.ok && data.success) {
+        setSyncPeriodResult(data.message || `Успешно импортировано звонков: ${data.imported ?? 0}`);
         setTimeout(() => window.location.reload(), 2000);
       } else {
         setSyncPeriodResult(`Ошибка: ${data.error || 'Неизвестная ошибка'}`);

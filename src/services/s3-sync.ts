@@ -5,20 +5,38 @@
 
 import { S3Client, GetObjectCommand, PutObjectCommand, HeadBucketCommand } from '@aws-sdk/client-s3';
 import { encrypt, decrypt } from '../store/crypto-store.js';
+import { readStoreSync } from '../store/store.js';
 
 // ─── Клиент S3 timeweb.cloud ───
 function getTimewebS3Client(): { s3: S3Client; bucket: string; storeKey: string; keyPrefix: string } | null {
-  const endpoint = process.env.S3_ENDPOINT;
-  const accessKeyId = process.env.S3_ACCESS_KEY;
-  const secretAccessKey = process.env.S3_SECRET_KEY;
-  const bucket = process.env.S3_BUCKET_NAME;
+  let endpoint = process.env.S3_ENDPOINT;
+  let accessKeyId = process.env.S3_ACCESS_KEY;
+  let secretAccessKey = process.env.S3_SECRET_KEY;
+  let bucket = process.env.S3_BUCKET_NAME;
+  let region = process.env.S3_REGION || 'ru-1';
+  let keyPrefix = process.env.S3_KEY_PREFIX || 'app/data/';
+
+  try {
+    const store = readStoreSync();
+    const creds = store.config?.credentials;
+    if (creds) {
+      if (creds.s3Endpoint) endpoint = creds.s3Endpoint;
+      if (creds.s3AccessKey) accessKeyId = creds.s3AccessKey;
+      if (creds.s3SecretKey) secretAccessKey = creds.s3SecretKey;
+      if (creds.s3BucketName) bucket = creds.s3BucketName;
+      if (creds.s3Region) region = creds.s3Region;
+      if (creds.s3KeyPrefix) keyPrefix = creds.s3KeyPrefix;
+    }
+  } catch (e) {
+    // ignore
+  }
 
   if (!endpoint || !accessKeyId || !secretAccessKey || !bucket) {
     return null;
   }
 
   const s3 = new S3Client({
-    region: process.env.S3_REGION || 'ru-1',
+    region,
     endpoint,
     credentials: {
       accessKeyId,
@@ -27,7 +45,6 @@ function getTimewebS3Client(): { s3: S3Client; bucket: string; storeKey: string;
     forcePathStyle: true,
   });
 
-  const keyPrefix = process.env.S3_KEY_PREFIX || 'app/data/';
   const storeKey = `${keyPrefix}data-store.enc`;
 
   return { s3, bucket, storeKey, keyPrefix };

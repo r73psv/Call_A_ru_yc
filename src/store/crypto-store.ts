@@ -8,14 +8,33 @@ import crypto from 'crypto';
 const ALGORITHM = 'aes-256-gcm';
 
 // 256 bits = 32 bytes = 64 hex characters
+let customEncryptionKey: string | null = null;
 let cachedKey: Buffer | null = null;
+
+export function setStoreEncryptionKey(key: string | null): void {
+  customEncryptionKey = key ? key.trim() : null;
+  cachedKey = null;
+}
+
+export function invalidateEncryptionKeyCache(): void {
+  cachedKey = null;
+}
+
+export function isStoreEncryptionKeyConfigured(): boolean {
+  const hexKey = customEncryptionKey || process.env.STORE_ENCRYPTION_KEY;
+  return Boolean(hexKey && hexKey.length === 64 && /^[0-9a-fA-F]+$/.test(hexKey));
+}
 
 export function getEncryptionKey(): Buffer {
   if (cachedKey) return cachedKey;
 
-  const hexKey = process.env.STORE_ENCRYPTION_KEY;
+  const hexKey = customEncryptionKey || process.env.STORE_ENCRYPTION_KEY;
   if (hexKey && hexKey.length === 64 && /^[0-9a-fA-F]+$/.test(hexKey)) {
     cachedKey = Buffer.from(hexKey, 'hex');
+    return cachedKey;
+  }
+  if (hexKey && hexKey.length >= 32) {
+    cachedKey = crypto.createHash('sha256').update(hexKey).digest();
     return cachedKey;
   }
 

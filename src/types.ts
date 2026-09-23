@@ -7,7 +7,70 @@ export type ModelType = 'GigaChat:Lite' | 'GigaChat:Pro' | 'GigaChat:Max' | 'gem
 
 export type GigaChatModel = 'GigaChat:Lite' | 'GigaChat:Pro' | 'GigaChat:Max';
 
-export type UserRole = 'admin' | 'manager' | 'viewer';
+export type UserRole = 'admin' | 'manager' | 'operator' | 'viewer';
+
+export interface User {
+  id: string;
+  username: string;
+  name: string;
+  role: UserRole;
+  passwordHash: string;
+  salt: string;
+  createdAt: string;
+  updatedAt?: string;
+  lastLoginAt?: string;
+  isActive: boolean;
+  notes?: string;
+}
+
+export interface AuthSession {
+  token: string;
+  user: {
+    id: string;
+    username: string;
+    name: string;
+    role: UserRole;
+  };
+  createdAt: number;
+  expiresAt: number;
+}
+
+export interface SystemCredentials {
+  gigachatAuthKey?: string;
+  gigachatModel?: GigaChatModel;
+  gigachatScope?: string;
+  yandexApiKey?: string;
+  yandexFolderId?: string;
+  yandexServiceAccountKeyFile?: string;
+  yandexServiceAccountKeyJson?: string;
+
+  // Yandex Object Storage (для аудиозаписей SpeechKit >= 1MB)
+  yandexStorageBucket?: string;
+  yandexStorageAccessKey?: string;
+  yandexStorageSecretKey?: string;
+  yandexStorageEndpoint?: string;
+  yandexStorageRegion?: string;
+
+  // S3 Timeweb / Внешнее хранилище (для резервной копии базы данных 152-ФЗ)
+  s3Endpoint?: string;
+  s3AccessKey?: string;
+  s3SecretKey?: string;
+  s3BucketName?: string;
+  s3KeyPrefix?: string;
+  s3Region?: string;
+
+  storeEncryptionKey?: string;
+  megafonToken?: string;
+  megafonLkLogin?: string;
+  megafonLkPassword?: string;
+  vkToken?: string;
+  vkChatId?: string;
+  yclientsUserToken?: string;
+  yclientsPartnerToken?: string;
+  yclientsSalonId?: string;
+  adminPasswordHash?: string;
+  adminPasswordSalt?: string;
+}
 
 export interface KeyFacts {
   is_dispute: boolean;
@@ -142,6 +205,7 @@ export interface SystemConfig {
   yandexCloudConfigured?: boolean;
   gigachatConfigured?: boolean;
   encryptionActive?: boolean;
+  credentials?: SystemCredentials;
   ttlSettings?: {
     audioDays: number;
     transcriptDays: number;

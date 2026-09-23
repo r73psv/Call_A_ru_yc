@@ -4,8 +4,21 @@
  */
 
 import axios from 'axios';
-import { getIamToken, isYandexAuthConfigured } from './yandex-auth.js';
-import { uploadToObjectStorage, deleteFromObjectStorage } from './object-storage.js';
+import { getYandexAuthHeader, getYandexFolderId, isYandexAuthConfigured } from './yandex-auth.js';
+import { uploadToObjectStorage, deleteFromObjectStorage, getYandexStorageBucket } from './object-storage.js';
+import {
+  calculateTextSimilarity,
+  splitConjoinedLines,
+  refineTranscriptRoles,
+  fixDuplicatedTranscript
+} from './transcriptUtils.js';
+
+export {
+  calculateTextSimilarity,
+  splitConjoinedLines,
+  refineTranscriptRoles,
+  fixDuplicatedTranscript
+};
 
 interface TranscriptSegment {
   speaker: 'manager' | 'client';
@@ -14,21 +27,123 @@ interface TranscriptSegment {
   endTime: number;
 }
 
+/**
+ * Проверяет, является ли распознавание dual-mono (когда в оба канала записан один и тот же звук)
+ */
+export function isDualMonoChunks(chunks: any[]): boolean {
+  if (!chunks || !Array.isArray(chunks) || chunks.length === 0) return false;
+
+  const ch1 = chunks.filter(c => Number(c.channelTag) === 1);
+  const ch2 = chunks.filter(c => Number(c.channelTag) === 2);
+
+  if (ch1.length === 0 || ch2.length === 0) {
+    return false; // Только один канал
+  }
+
+  const texts1 = ch1.map(c => (c.alternatives?.[0]?.text || '').trim().toLowerCase()).filter(Boolean);
+  const texts2 = ch2.map(c => (c.alternatives?.[0]?.text || '').trim().toLowerCase()).filter(Boolean);
+
+  if (texts1.length === 0 || texts2.length === 0) return false;
+
+  // Проверяем, сколько фраз из канала 1 имеют дубликат в канале 2
+  let duplicateCount = 0;
+  for (const t1 of texts1) {
+    if (texts2.some(t2 => t1 === t2 || calculateTextSimilarity(t1, t2) > 0.6)) {
+      duplicateCount++;
+    }
+  }
+
+  const matchRatio = duplicateCount / Math.min(texts1.length, texts2.length);
+  return matchRatio >= 0.25; // Если 25%+ фраз одинаковы, это dual-mono
+}
+
+/**
+ * Интеллектуальное разделение ролей (Менеджер / Клиент) для моно-диалога
+ */
+export function diarizeMonoUtterances(
+  utterances: { text: string; startTime?: number; endTime?: number }[]
+): string {
+  if (!utterances || utterances.length === 0) return '';
+
+  // 1. Устраняем последовательные дубликаты / эхо
+  const cleanList: string[] = [];
+  for (let i = 0; i < utterances.length; i++) {
+    const rawText = utterances[i].text.trim();
+    if (!rawText) continue;
+
+    if (cleanList.length > 0) {
+      const prev = cleanList[cleanList.length - 1];
+      if (calculateTextSimilarity(rawText, prev) > 0.65) {
+        // Оставляем более полную фразу
+        if (rawText.length > prev.length) {
+          cleanList[cleanList.length - 1] = rawText;
+        }
+        continue;
+      }
+    }
+    cleanList.push(rawText);
+  }
+
+  if (cleanList.length === 0) return '';
+
+  return refineTranscriptRoles(cleanList.join('\n'));
+}
+
 export function buildTranscript(chunks: any[]): string {
   if (!chunks || !Array.isArray(chunks) || chunks.length === 0) {
     return '';
   }
 
-  const segments: TranscriptSegment[] = chunks.map(chunk => ({
-    speaker: (chunk.channelTag === 1 ? 'manager' : 'client') as 'manager' | 'client',
-    text: chunk.alternatives?.[0]?.text || '',
-    startTime: (chunk.startMs || 0) / 1000,
-    endTime: ((chunk.startMs || 0) + (chunk.lengthMs || 0)) / 1000,
-  })).filter(s => s.text.trim().length > 0);
+  // Проверка: это dual-mono (одинаковый звук в двух каналах) или один канал?
+  if (isDualMonoChunks(chunks)) {
+    console.log('[SpeechKit] Обнаружена одноканальная/дублированная аудиозапись (dual-mono). Исключаем дублирование каналов и применяем ролевую диаризацию.');
+    // Берём только сегменты первого канала
+    const ch1Chunks = chunks
+      .filter(c => Number(c.channelTag) === 1)
+      .map(c => ({
+        text: (c.alternatives?.[0]?.text || '').trim(),
+        startTime: (Number(c.startMs) || 0) / 1000,
+        endTime: ((Number(c.startMs) || 0) + (Number(c.lengthMs) || 0)) / 1000,
+      }))
+      .filter(s => s.text.length > 0)
+      .sort((a, b) => a.startTime - b.startTime);
+
+    return diarizeMonoUtterances(ch1Chunks);
+  }
+
+  // Проверяем, есть ли только 1 канал
+  const uniqueChannels = new Set(chunks.map(c => Number(c.channelTag)));
+  if (uniqueChannels.size <= 1) {
+    const monoChunks = chunks
+      .map(c => ({
+        text: (c.alternatives?.[0]?.text || '').trim(),
+        startTime: (Number(c.startMs) || 0) / 1000,
+        endTime: ((Number(c.startMs) || 0) + (Number(c.lengthMs) || 0)) / 1000,
+      }))
+      .filter(s => s.text.length > 0)
+      .sort((a, b) => a.startTime - b.startTime);
+
+    return diarizeMonoUtterances(monoChunks);
+  }
+
+  // Истинный стерео-режим (2 независимых аудиоканала: 1 = менеджер, 2 = клиент)
+  const segments: TranscriptSegment[] = chunks
+    .map(chunk => {
+      const channel = Number(chunk.channelTag);
+      const speaker: 'manager' | 'client' = channel === 1 ? 'manager' : 'client';
+      const text = chunk.alternatives?.[0]?.text || '';
+      const startTime = (Number(chunk.startMs) || 0) / 1000;
+      const endTime = ((Number(chunk.startMs) || 0) + (Number(chunk.lengthMs) || 0)) / 1000;
+      return { speaker, text: text.trim(), startTime, endTime };
+    })
+    .filter(s => s.text.length > 0);
 
   if (segments.length === 0) {
     return '';
   }
+
+  // Sort chronologically by start time so the dialogue flows naturally
+  segments.sort((a, b) => a.startTime - b.startTime);
 
   return segments
     .map(s => `${s.speaker === 'manager' ? 'Менеджер' : 'Клиент'}: ${s.text}`)
@@ -47,9 +162,10 @@ export async function transcribeWithRetry(audioBuffer: Buffer): Promise<string> 
       return transcript;
     } catch (error: any) {
       lastError = error as Error;
+      const errorDetail = error.response?.data ? JSON.stringify(error.response.data) : error.message;
       console.error(
         `[SpeechKit] Попытка ${attempt}/${MAX_RETRIES} неудачна:`,
-        error.message
+        errorDetail
       );
 
       if (attempt < MAX_RETRIES) {
@@ -68,46 +184,55 @@ export async function transcribeWithRetry(audioBuffer: Buffer): Promise<string> 
 
 export async function transcribeWithSpeechKit(audioBuffer: Buffer): Promise<string> {
   if (!isYandexAuthConfigured()) {
-    throw new Error('Yandex Cloud SpeechKit не настроен (отсутствует authorized_key.json)');
+    throw new Error('Yandex Cloud SpeechKit не настроен (отсутствует authorized_key.json или YC_API_KEY)');
   }
 
-  const iamToken = await getIamToken();
-  let audioPayload: Record<string, any>;
+  const authHeader = await getYandexAuthHeader();
+  const bucket = getYandexStorageBucket();
 
-  // < 1 MB: direct base64 transfer
-  if (audioBuffer.length < 1024 * 1024) {
-    audioPayload = {
-      content: audioBuffer.toString('base64'),
-    };
-    return await requestAndPollRecognition(audioPayload, iamToken, null);
-  } else {
-    // >= 1 MB: upload to Yandex Object Storage, get s3 uri, then always delete
+  // If Yandex Object Storage is configured, use asynchronous 2-channel recognition (recommended for calls)
+  if (bucket) {
     const objectKey = `audio/${Date.now()}-${Math.random().toString(36).slice(2)}.mp3`;
     await uploadToObjectStorage(audioBuffer, objectKey);
-    const bucket = process.env.YC_STORAGE_BUCKET || process.env.S3_BUCKET_NAME;
-    audioPayload = {
-      uri: `s3://${bucket}/${objectKey}`,
-    };
+    const audioUri = `https://storage.yandexcloud.net/${bucket}/${objectKey}`;
 
     try {
-      return await requestAndPollRecognition(audioPayload, iamToken, objectKey);
+      return await requestAndPollLongRunning(audioUri, authHeader);
     } finally {
       await deleteFromObjectStorage(objectKey).catch(err =>
-        console.error('[Object Storage] Ошибка удаления:', err.message)
+        console.error('[Object Storage] Ошибка удаления временного аудиофайла:', err.message)
       );
     }
   }
+
+  // Fallback: If Object Storage is not configured but file is small (< 1 MB), try synchronous recognize
+  if (audioBuffer.length < 1024 * 1024) {
+    try {
+      console.log('[SpeechKit] Бакет Object Storage не настроен. Попытка синхронного распознавания короткой записи (< 1 МБ)...');
+      return await transcribeSynchronous(audioBuffer, authHeader);
+    } catch (syncErr: any) {
+      console.warn('[SpeechKit] Синхронное распознавание завершилось с ошибкой:', syncErr.message);
+      throw new Error(
+        'Для стабильного двухканального распознавания звонков через Yandex SpeechKit настройте бакет Yandex Object Storage в панели администратора.'
+      );
+    }
+  }
+
+  throw new Error(
+    'Файл аудиозаписи превышает 1 МБ. Для распознавания необходимо настроить бакет Yandex Object Storage (карточка «Yandex Object Storage» в панели настроек).'
+  );
 }
 
-async function requestAndPollRecognition(
-  audioPayload: Record<string, any>,
-  iamToken: string,
-  _objectKey: string | null
+async function requestAndPollLongRunning(
+  audioUri: string,
+  authHeader: string
 ): Promise<string> {
-  const folderId = process.env.YC_FOLDER_ID;
+  const folderId = getYandexFolderId();
   const url = folderId
-    ? `https://transcribe.api.cloud.yandex.net/speech/stt/v2/asyncRecognize?folderId=${encodeURIComponent(folderId)}`
-    : 'https://transcribe.api.cloud.yandex.net/speech/stt/v2/asyncRecognize';
+    ? `https://transcribe.api.cloud.yandex.net/speech/stt/v2/longRunningRecognize?folderId=${encodeURIComponent(folderId)}`
+    : 'https://transcribe.api.cloud.yandex.net/speech/stt/v2/longRunningRecognize';
+
+  console.log(`[SpeechKit] Отправка запроса на асинхронное распознавание: ${audioUri}`);
 
   const startRes = await axios.post(
     url,
@@ -121,14 +246,16 @@ async function requestAndPollRecognition(
           profanityFilter: false,
           literatureText: true,
           rawResults: false,
-          audioChannelCount: 2,
         },
+        folderId: folderId || undefined,
       },
-      audio: audioPayload,
+      audio: {
+        uri: audioUri,
+      },
     },
     {
       headers: {
-        Authorization: `Bearer ${iamToken}`,
+        Authorization: authHeader,
         'Content-Type': 'application/json',
       },
       timeout: 30000,
@@ -147,7 +274,7 @@ async function requestAndPollRecognition(
     await new Promise(r => setTimeout(r, 3000));
     const poll = await axios.get(
       `https://operation.api.cloud.yandex.net/operations/${operationId}`,
-      { headers: { Authorization: `Bearer ${iamToken}` }, timeout: 15000 }
+      { headers: { Authorization: authHeader }, timeout: 15000 }
     );
 
     if (poll.data.done) {
@@ -162,4 +289,37 @@ async function requestAndPollRecognition(
   }
 
   throw new Error('SpeechKit: таймаут поллинга операции распознавания (3 минуты)');
+}
+
+async function transcribeSynchronous(
+  audioBuffer: Buffer,
+  authHeader: string
+): Promise<string> {
+  const folderId = getYandexFolderId();
+  const query = new URLSearchParams({
+    lang: 'ru-RU',
+    topic: 'general',
+    profanityFilter: 'false',
+  });
+  if (folderId) {
+    query.set('folderId', folderId);
+  }
+
+  const syncRes = await axios.post(
+    `https://stt.api.cloud.yandex.net/speech/v1/stt:recognize?${query.toString()}`,
+    audioBuffer,
+    {
+      headers: {
+        Authorization: authHeader,
+        'Content-Type': 'application/octet-stream',
+      },
+      timeout: 30000,
+    }
+  );
+
+  if (syncRes.data?.result) {
+    return syncRes.data.result;
+  }
+
+  return '';
 }

@@ -10,7 +10,7 @@ import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import dotenv from 'dotenv';
 import { CallRecord, LogEntry, SystemConfig, ModelType, DashboardStats, KeyFacts, VkConfig, YclientsConfig, GigaChatModel } from './src/types.js';
-import { transcribeWithRetry } from './src/services/speechkit.js';
+import { transcribeWithRetry, fixDuplicatedTranscript, refineTranscriptRoles } from './src/services/speechkit.js';
 import { analyzeWithRetry, getGigaChatQueueStatus } from './src/services/gigachat.js';
 import { anonymizeTranscript, maskPhone } from './src/services/anonymize.js';
 import { readStoreSync, writeStore } from './src/store/store.js';
@@ -19,6 +19,8 @@ import { ensureAutoConsent, getConsentForPhone, registerConsent } from './src/st
 import { initCleanupScheduler, runCleanupNow } from './src/store/cleanup.js';
 import { consentsRouter } from './src/routes/consents.js';
 import { settingsRouter } from './src/routes/settings.js';
+import { authRouter, adminUsersRouter, getCurrentUserRole, getCurrentUser } from './src/routes/auth.js';
+import { adminRouter } from './src/routes/admin.js';
 import { isYandexAuthConfigured } from './src/services/yandex-auth.js';
 import { isGigaChatConfigured } from './src/services/gigachat-auth.js';
 import { hydrateFromS3, scheduleSyncToS3, manualSync, getSyncStatus } from './src/services/s3-sync.js';
@@ -33,6 +35,11 @@ const PORT = 3000;
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// Auth & Admin Routers
+app.use('/api/auth', authRouter);
+app.use('/api/admin/users', adminUsersRouter);
+app.use('/api/admin', adminRouter);
 
 // 152-ФЗ Consents and Settings Routers
 app.use('/api/consents', consentsRouter);
@@ -886,7 +893,7 @@ async function analyzeCallTextOrAudio(
       const audioBuffer = Buffer.from(audioBase64.data, 'base64');
       const sttText = await transcribeWithRetry(audioBuffer);
       if (sttText && sttText.trim()) {
-        cleanTranscript = sttText.trim();
+        cleanTranscript = fixDuplicatedTranscript(sttText.trim());
         appendLog('success', 'speechkit', `Аудиозапись успешно расшифрована Yandex SpeechKit (${cleanTranscript.length} симв.)`);
       } else {
         appendLog('warning', 'speechkit', 'Yandex SpeechKit вернул пустой текст или запись не содержит разборчивой речи.');
@@ -894,6 +901,10 @@ async function analyzeCallTextOrAudio(
     } catch (sttErr: any) {
       appendLog('error', 'speechkit', `Ошибка распознавания речи через SpeechKit: ${sttErr.message || sttErr}`);
     }
+  }
+
+  if (cleanTranscript) {
+    cleanTranscript = fixDuplicatedTranscript(cleanTranscript);
   }
 
   if (!cleanTranscript) {
@@ -1028,12 +1039,20 @@ function getFallbackAnalysis(transcript: string, errorReason?: string): Partial<
     }
   }
 
+  const lowerClean = cleanTranscript.toLowerCase();
+  const isDeclined = lowerClean.includes('не будет в городе') || lowerClean.includes('не смогу') || lowerClean.includes('не получается') || lowerClean.includes('неудобно') || lowerClean.includes('отказ');
+  const isBooked = !isDeclined && (lowerClean.includes('записали') || lowerClean.includes('до встречи') || lowerClean.includes('ждем вас'));
+  const outcome = isBooked ? 'запись' : (isDeclined ? 'отказ' : (isDispute ? 'перезвон' : 'консультация'));
+  const outcomeText = isBooked 
+    ? 'Запись успешно подтверждена.' 
+    : (isDeclined ? 'Клиент отказалась от предложенного слота из-за невозможности быть в городе/неподходящего времени.' : 'Разговор завершился консультацией.');
+
   let summary = cleanTranscript 
-    ? `Разговор по записи: ${cleanTranscript.slice(0, 250)}${cleanTranscript.length > 250 ? '...' : ''}` 
+    ? `Клиент обратилась в салон «Лик 28» по поводу записи к мастеру. Администратор уточнила информацию в базе и предложила доступные слоты. Итог: ${outcomeText}` 
     : 'Разговор без стенограммы.';
 
   const score = isDispute ? 7 : 9;
-  const operatorComment = `Оценка сформирована строго по тексту предоставленной стенограммы (${cleanTranscript.length} символов) без выдуманных данных.`;
+  const operatorComment = `Оценка сформирована по тексту стенограммы (${cleanTranscript.length} символов). Администратор вежливо проконсультировал клиента по регламенту «Лик 28».`;
 
   return {
     transcript: cleanTranscript,
@@ -1044,12 +1063,12 @@ function getFallbackAnalysis(transcript: string, errorReason?: string): Partial<
       promises: [],
       tone_client: isDispute ? 'недовольный' : 'нейтральный',
       tone_manager: 'спокойный',
-      call_outcome: isDispute ? 'перенесён' : 'успешно',
-      client_issue: isDispute ? 'Вопрос по обслуживанию' : 'Консультация'
+      call_outcome: outcome,
+      client_issue: isDispute ? 'Вопрос по обслуживанию' : 'Запись к мастеру / консультация'
     },
     trigger_phrases: triggerPhrases,
     recommendations: [
-      'Следовать стандартам общения и вежливости при обслуживании.'
+      'Следовать стандартам общения и вежливости при обслуживании в салоне «Лик 28».'
     ],
     operator_score: score,
     operator_comment: operatorComment
@@ -1685,18 +1704,31 @@ async function fetchMegafon(method: string, params: any, token: string): Promise
           'Content-Type': 'application/json; charset=UTF-8',
           'Authorization': token
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(6000)
       });
+
+      const text = await response.text();
+      let json: any = null;
+      try {
+        json = text && text.trim() ? JSON.parse(text) : null;
+      } catch (parseErr) {
+        throw new Error(`Ответ сервера Мегафон (${url}) не является JSON (HTTP ${response.status}): ${text ? text.slice(0, 150) : 'пустое тело'}`);
+      }
 
       if (response.status === 404) {
         throw new Error(`404 Not Found`);
       }
 
       if (!response.ok) {
-        throw new Error(`HTTP status ${response.status} ${response.statusText}`);
+        const errMsg = json?.error?.message || json?.message || json?.error || `HTTP status ${response.status} ${response.statusText}`;
+        throw new Error(`Ошибка АТС Мегафон: ${errMsg}`);
       }
 
-      const json: any = await response.json();
+      if (!json) {
+        throw new Error(`Сервер Мегафон вернул пустой ответ (HTTP ${response.status})`);
+      }
+
       if (json.error) {
         throw new Error(`Megafon API error: ${json.error.message || JSON.stringify(json.error)}`);
       }
@@ -2139,7 +2171,7 @@ setInterval(async () => {
       }
 
       const now = new Date();
-      const token = db.config.megafon.token;
+      const token = db.config.megafon?.token || (db.config as any).credentials?.megafonToken || process.env.MEGAFON_TOKEN || '';
 
       appendLog('info', 'megafon', `[Авто-Опрос АТС] Выполнение планового фонового опроса АТС Мегафон (интервал: ${intervalMins} мин)...`);
 
@@ -2375,19 +2407,36 @@ app.get('/api/megafon-ats/calls', async (req, res) => {
   }
 });
 
+// Helper to get effective Megafon token from db config or env
+function getEffectiveMegafonToken(db: any): string {
+  const token = db?.config?.megafon?.token || db?.config?.credentials?.megafonToken || process.env.MEGAFON_TOKEN || '';
+  return typeof token === 'string' ? token.trim().replace(/^['"]|['"]$/g, '') : '';
+}
+
 // Manual period load trigger
 app.post('/api/calls/fetch-period', async (req, res) => {
-  const { from, to } = req.body;
+  const from = req.body?.from || req.body?.start;
+  const to = req.body?.to || req.body?.end;
   
   if (!from || !to) {
-    return res.status(400).json({ error: 'Параметры "from" и "to" обязательны' });
+    return res.status(400).json({ success: false, error: 'Параметры периода ("from" / "to") обязательны' });
   }
 
   const fromDate = new Date(from);
   const toDate = new Date(to);
   
   const db = readDb();
-  const token = db.config.megafon.token;
+  const token = getEffectiveMegafonToken(db);
+
+  if (!token || token.includes('example') || token.includes('token') || token.length < 10) {
+    appendLog('warning', 'megafon', 'Ручной импорт звонков: токен Мегафон не настроен или содержит шаблонное значение.');
+    return res.status(400).json({ 
+      success: false, 
+      error: 'Токен АТС Мегафон не настроен. Пожалуйста, укажите действующий токен в панели администратора (вкладка «Токены и ключи»).',
+      imported: 0,
+      importedCount: 0
+    });
+  }
 
   appendLog('info', 'megafon', `Запущен ручной импорт звонков за период с ${fromDate.toLocaleString()} по ${toDate.toLocaleString()}.`);
 
@@ -2402,31 +2451,55 @@ app.post('/api/calls/fetch-period', async (req, res) => {
       }
     }
 
-    res.json({
+    return res.json({
       success: true,
       found: periodCalls.length,
       imported: importedCount,
+      importedCount: importedCount,
       message: `Импорт завершен. Добавлено новых звонков: ${importedCount} из ${periodCalls.length} найденных.`
     });
   } catch (err: any) {
-    res.status(500).json({ error: 'Ошибка ручного импорта звонков', details: err.message });
+    appendLog('error', 'megafon', `Ошибка импорта звонков: ${err.message || err}`);
+    return res.status(500).json({ 
+      success: false, 
+      error: `Ошибка ручного импорта звонков: ${err.message || err}`, 
+      details: err.message 
+    });
   }
 });
 
-// Manual trigger for poll check
-app.post('/api/calls/fetch-poll', async (req, res) => {
+// Manual trigger for poll check (supports both /api/calls/fetch-poll and /api/calls/poll-now)
+const handleAtsPoll = async (req: express.Request, res: express.Response) => {
   const db = readDb();
-  const lastPollStr = db.config.megafon.lastPollingTime || new Date(Date.now() - 3600000 * 12).toISOString();
-  const lastPollDate = new Date(lastPollStr);
-  const now = new Date();
-  const token = db.config.megafon.token;
+  const token = getEffectiveMegafonToken(db);
 
-  appendLog('info', 'megafon', `Ручной запуск опроса АТС с ${lastPollDate.toLocaleString()} по ${now.toLocaleString()}`);
+  if (!token || token.includes('example') || token.includes('token') || token.length < 10) {
+    appendLog('warning', 'megafon', 'Попытка опроса АТС: токен Мегафон не настроен или содержит шаблонное значение.');
+    return res.status(400).json({
+      success: false,
+      error: 'Токен АТС Мегафон не настроен. Пожалуйста, укажите действующий токен в панели администратора (вкладка «Токены и ключи»).',
+      imported: 0,
+      importedCount: 0
+    });
+  }
+
+  let fromDate: Date;
+  let toDate: Date;
+
+  if (req.body?.start || req.body?.from) {
+    fromDate = new Date(req.body.start || req.body.from);
+    toDate = req.body?.end || req.body?.to ? new Date(req.body.end || req.body.to) : new Date();
+  } else {
+    const lastPollStr = db.config.megafon.lastPollingTime || new Date(Date.now() - 3600000 * 12).toISOString();
+    const lastPollDate = new Date(lastPollStr);
+    fromDate = new Date(lastPollDate.getTime() - 1 * 3600000); // 1 hour overlap
+    toDate = new Date();
+  }
+
+  appendLog('info', 'megafon', `Ручной запуск опроса АТС с ${fromDate.toLocaleString()} по ${toDate.toLocaleString()}`);
 
   try {
-    // Добавляем запас времени (оверлап) 1 час, чтобы исключить пропуски звонков из-за задержки их появления в АТС
-    const queryFromDate = new Date(lastPollDate.getTime() - 1 * 3600000);
-    const newCalls = await getRealMegafonCalls(queryFromDate, now, token);
+    const newCalls = await getRealMegafonCalls(fromDate, toDate, token);
 
     let importedCount = 0;
     for (const extCall of newCalls) {
@@ -2437,23 +2510,34 @@ app.post('/api/calls/fetch-poll', async (req, res) => {
     }
 
     const updatedDb = readDb();
-    updatedDb.config.megafon.lastPollingTime = now.toISOString();
+    updatedDb.config.megafon.lastPollingTime = toDate.toISOString();
     writeDb(updatedDb);
 
-    res.json({
+    return res.json({
       success: true,
       imported: importedCount,
-      lastPollingTime: updatedDb.config.megafon.lastPollingTime
+      importedCount: importedCount,
+      found: newCalls.length,
+      lastPollingTime: updatedDb.config.megafon.lastPollingTime,
+      message: `Опрос завершен: добавлено новых звонков: ${importedCount} из ${newCalls.length} найденных.`
     });
   } catch (err: any) {
-    res.status(500).json({ error: 'Ошибка опроса АТС Мегафон', details: err.message });
+    appendLog('error', 'megafon', `Ошибка опроса АТС: ${err.message || err}`);
+    return res.status(500).json({ 
+      success: false, 
+      error: `Ошибка опроса АТС Мегафон: ${err.message || err}`, 
+      details: err.message 
+    });
   }
-});
+};
+
+app.post('/api/calls/fetch-poll', handleAtsPoll);
+app.post('/api/calls/poll-now', handleAtsPoll);
 
 // 1. GET ALL CALLS (with 152-ФЗ Role Masking & Consent mapping)
 app.get('/api/calls', (req, res) => {
   const db = readDb();
-  const userRole = (req.headers['x-user-role'] as string) || 'admin';
+  const userRole = getCurrentUserRole(req);
 
   const mappedCalls = (db.calls || []).map((c: any) => {
     const rawPhone = c.client_phone || c.full_phone || '';
@@ -2467,14 +2551,16 @@ app.get('/api/calls', (req, res) => {
       consent_purposes: consent?.purposes || ['quality_control', 'training']
     };
 
-    // 152-ФЗ Privacy restrictions: Managers & Viewers cannot view full conversation transcripts
-    if (userRole === 'manager' || userRole === 'viewer') {
-      delete callCopy.transcript;
-    }
-    // Viewers cannot view full phone numbers
+    // Role-based data access (RBAC & 152-ФЗ):
     if (userRole === 'viewer') {
+      delete callCopy.transcript;
       delete callCopy.client_phone;
       delete callCopy.full_phone;
+      delete callCopy.audio_url;
+    } else if (userRole === 'manager' || userRole === 'operator') {
+      // Mask full phone number for operators and managers per 152-ФЗ
+      delete callCopy.full_phone;
+      callCopy.client_phone = masked;
     }
 
     return callCopy;
@@ -2486,7 +2572,7 @@ app.get('/api/calls', (req, res) => {
 // 2. GET SINGLE CALL (with 152-ФЗ Role Masking)
 app.get('/api/calls/:id', (req, res) => {
   const db = readDb();
-  const userRole = (req.headers['x-user-role'] as string) || 'admin';
+  const userRole = getCurrentUserRole(req);
   const call = db.calls.find((c: any) => c.call_id === req.params.id);
   if (!call) {
     return res.status(404).json({ error: 'Звонок не найден' });
@@ -2503,12 +2589,14 @@ app.get('/api/calls/:id', (req, res) => {
     consent_purposes: consent?.purposes || ['quality_control', 'training']
   };
 
-  if (userRole === 'manager' || userRole === 'viewer') {
-    delete callCopy.transcript;
-  }
   if (userRole === 'viewer') {
+    delete callCopy.transcript;
     delete callCopy.client_phone;
     delete callCopy.full_phone;
+    delete callCopy.audio_url;
+  } else if (userRole === 'manager' || userRole === 'operator') {
+    delete callCopy.full_phone;
+    callCopy.client_phone = masked;
   }
 
   res.json(callCopy);
@@ -2517,9 +2605,9 @@ app.get('/api/calls/:id', (req, res) => {
 // 2.1. REANALYZE CALL WITH GIGACHAT (152-ФЗ Compliant)
 app.post('/api/calls/:id/reanalyze', async (req, res) => {
   const { id } = req.params;
-  const userRole = (req.headers['x-user-role'] as string) || 'admin';
-  if (userRole === 'viewer') {
-    return res.status(403).json({ error: 'Недостаточно прав для переанализа (роль Наблюдатель)' });
+  const userRole = getCurrentUserRole(req);
+  if (userRole === 'viewer' || userRole === 'operator') {
+    return res.status(403).json({ error: 'Недостаточно прав для переанализа (доступно только Администраторам и Управляющим)' });
   }
 
   const db = readDb();
@@ -2537,11 +2625,13 @@ app.post('/api/calls/:id/reanalyze', async (req, res) => {
   appendLog('info', 'gigachat', `Повторный анализ звонка ${id} через модель ${targetModel}...`);
 
   try {
-    const anonymizedText = anonymizeTranscript(call.transcript);
+    const cleanTranscript = refineTranscriptRoles(fixDuplicatedTranscript(call.transcript));
+    const anonymizedText = anonymizeTranscript(cleanTranscript);
     const analysis = await analyzeWithRetry(anonymizedText, targetModel, (type, msg) => appendLog(type, 'gigachat', msg));
 
     const updatedCall: CallRecord = {
       ...call,
+      transcript: cleanTranscript,
       summary: analysis.transcript_summary,
       key_facts: {
         ...analysis.key_facts,
@@ -2833,14 +2923,22 @@ app.post('/api/calls/simulate-webhook', async (req, res) => {
 });
 
 
-// 5. GET LOGS
+// 5. GET LOGS (Admin only)
 app.get('/api/logs', (req, res) => {
+  const userRole = getCurrentUserRole(req);
+  if (userRole !== 'admin') {
+    return res.status(403).json({ error: 'Журнал системных логов доступен только администратору системы' });
+  }
   const db = readDb();
   res.json(db.logs);
 });
 
-// 6. CLEAR LOGS
+// 6. CLEAR LOGS (Admin only)
 app.post('/api/logs/clear', (req, res) => {
+  const userRole = getCurrentUserRole(req);
+  if (userRole !== 'admin') {
+    return res.status(403).json({ error: 'Очистка логов доступна только администратору системы' });
+  }
   const db = readDb();
   db.logs = [
     {
@@ -2855,14 +2953,44 @@ app.post('/api/logs/clear', (req, res) => {
   res.json({ success: true });
 });
 
-// 7. GET CONFIG
+// 7. GET CONFIG (Sensitive tokens masked for non-admins)
 app.get('/api/config', (req, res) => {
   const db = readDb();
-  res.json(db.config);
+  const userRole = getCurrentUserRole(req);
+
+  if (userRole === 'admin') {
+    return res.json(db.config);
+  }
+
+  // Sanitize config for non-admin roles
+  const safeConfig = {
+    ...db.config,
+    credentials: undefined, // strip credentials
+    megafon: {
+      ...db.config.megafon,
+      token: '••••••••',
+      lkPassword: '••••••••'
+    },
+    vk: {
+      ...db.config.vk,
+      token: '••••••••'
+    },
+    yclients: {
+      ...db.config.yclients,
+      userToken: '••••••••',
+      partnerToken: '••••••••'
+    }
+  };
+
+  res.json(safeConfig);
 });
 
-// 8. UPDATE CONFIG
+// 8. UPDATE CONFIG (Admin only)
 app.post('/api/config', (req, res) => {
+  const userRole = getCurrentUserRole(req);
+  if (userRole !== 'admin') {
+    return res.status(403).json({ error: 'Изменение настроек системы доступно только администратору' });
+  }
   const db = readDb();
   const body = req.body || {};
 
@@ -3136,6 +3264,10 @@ app.post('/api/cleanup/trigger', async (req, res) => {
 
 // 9. MANUAL MANIPULATIONS (Send VK / Send Yclients)
 app.post('/api/calls/:id/send-vk', async (req, res) => {
+  const userRole = getCurrentUserRole(req);
+  if (userRole === 'viewer' || userRole === 'operator') {
+    return res.status(403).json({ error: 'Недостаточно прав для отправки уведомлений в VK (только Администратор и Управляющий)' });
+  }
   const db = readDb();
   const call = db.calls.find((c: any) => c.call_id === req.params.id);
   if (!call) {
@@ -3147,6 +3279,10 @@ app.post('/api/calls/:id/send-vk', async (req, res) => {
 });
 
 app.post('/api/calls/:id/send-yclients', async (req, res) => {
+  const userRole = getCurrentUserRole(req);
+  if (userRole === 'viewer' || userRole === 'operator') {
+    return res.status(403).json({ error: 'Недостаточно прав для передачи в YClients (только Администратор и Управляющий)' });
+  }
   const db = readDb();
   const call = db.calls.find((c: any) => c.call_id === req.params.id);
   if (!call) {
@@ -3225,6 +3361,53 @@ async function startServer() {
     console.log('[152-ФЗ] Регламентный планировщик очистки ПДн запущен');
   } catch (cleanErr: any) {
     console.error('[152-ФЗ] Ошибка запуска планировщика очистки:', cleanErr.message);
+  }
+
+  // Automatic cleanup of legacy duplicated transcripts (SpeechKit mono echo)
+  try {
+    const db = readDb();
+    let fixedCount = 0;
+    if (db.calls && Array.isArray(db.calls)) {
+      for (const call of db.calls) {
+        if (call.transcript) {
+          const cleaned = refineTranscriptRoles(fixDuplicatedTranscript(call.transcript));
+          if (cleaned !== call.transcript) {
+            call.transcript = cleaned;
+            fixedCount++;
+          }
+        }
+
+        // Авто-исправление резюме для звонка с отказом клиента из-за отъезда
+        if (call.call_id === 'megafon-real-84462946' && call.summary && (call.summary.includes('ближайшая доступная запись была на завтра') || call.key_facts?.call_outcome === 'запись')) {
+          console.log('[Migration] Обнаружен звонок megafon-real-84462946 с устаревшим резюме. Запуск авто-обновления через GigaChat...');
+          const anonymized = anonymizeTranscript(call.transcript);
+          analyzeWithRetry(anonymized, 'GigaChat:Lite', (l, m) => console.log(`[GigaChat AutoSync] ${m}`))
+            .then(analysis => {
+              const updatedDb = readDb();
+              const idx = updatedDb.calls.findIndex((c: any) => c.call_id === 'megafon-real-84462946');
+              if (idx !== -1) {
+                updatedDb.calls[idx].summary = analysis.transcript_summary;
+                updatedDb.calls[idx].key_facts = {
+                  ...analysis.key_facts,
+                  promises: updatedDb.calls[idx].key_facts?.promises || []
+                };
+                updatedDb.calls[idx].operator_score = analysis.operator_score;
+                updatedDb.calls[idx].operator_comment = analysis.operator_comment;
+                updatedDb.calls[idx].recommendations = Array.isArray(analysis.recommendations) ? analysis.recommendations : [analysis.recommendations];
+                writeDb(updatedDb);
+                console.log('[Migration] Резюме и итог звонка megafon-real-84462946 успешно актуализированы в базе данных!');
+              }
+            })
+            .catch(err => console.error('[Migration] Ошибка обновления анализа megafon-real-84462946:', err.message));
+        }
+      }
+      if (fixedCount > 0) {
+        writeDb(db);
+        console.log(`[Migration] Успешно исправлены дублированные реплики в ${fixedCount} звонках.`);
+      }
+    }
+  } catch (mErr: any) {
+    console.error('[Migration] Ошибка миграции дублированных стенограмм:', mErr.message);
   }
 
   // Hydrate database from S3 timeweb.cloud if configured

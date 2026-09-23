@@ -79,6 +79,7 @@ export interface KeyFacts {
   tone_client: 'нейтральный' | 'позитивный' | 'негативный' | 'недовольный' | 'агрессивный' | string;
   tone_manager: 'нейтральный' | 'позитивный' | 'негативный' | 'спокойный' | 'оборонительный' | string;
   call_outcome: 'запись' | 'консультация' | 'отказ' | 'перезвон' | 'успешно' | 'не успешно' | 'перенесён' | 'автоответчик' | string;
+  booking_status?: 'согласие' | 'отказ' | 'консультация' | 'не применимо' | string;
   client_issue?: string;
 }
 
@@ -95,6 +96,7 @@ export interface CallRecord {
   model_used: ModelType | GigaChatModel;
   transcript: string;
   summary: string;
+  booking_status?: 'согласие' | 'отказ' | 'консультация' | 'не применимо' | string;
   key_facts: KeyFacts;
   trigger_phrases: string[];
   recommendations: string[];
@@ -239,12 +241,15 @@ export interface DashboardStats {
 
 export interface AnalysisResult {
   transcript_summary: string;
+  booking_status?: 'согласие' | 'отказ' | 'консультация' | 'не применимо' | string;
+  formatted_transcript?: string;
   key_facts: {
     is_dispute: boolean;
     dispute_reason: string | null;
     tone_client: string;
     tone_manager: string;
     call_outcome: string;
+    booking_status?: 'согласие' | 'отказ' | 'консультация' | 'не применимо' | string;
     client_issue: string;
   };
   operator_score: number | null;

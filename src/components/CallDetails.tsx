@@ -8,7 +8,8 @@ import {
   AlertTriangle, Check, ShieldAlert, Star, 
   ThumbsUp, Volume2, MessageSquare, 
   MessageCircle, Database, Download, ExternalLink, Zap,
-  ShieldCheck, Lock, Clock, Mic, FileText, Smartphone, HeartHandshake
+  ShieldCheck, Lock, Clock, Mic, FileText, Smartphone, HeartHandshake,
+  CheckCircle2, XCircle, HelpCircle
 } from 'lucide-react';
 import { CallRecord } from '../types.js';
 import { ReanalyzeButton } from './ReanalyzeButton.js';
@@ -36,10 +37,43 @@ export function CallDetails({
   const [sendingYc, setSendingYc] = useState(false);
   const [sentYc, setSentYc] = useState(false);
   const [vkError, setVkError] = useState<string | null>(null);
+  const [exportingPdf, setExportingPdf] = useState(false);
+  const [pdfSuccess, setPdfSuccess] = useState(false);
+  const [pdfError, setPdfError] = useState<string | null>(null);
 
   React.useEffect(() => {
     setVkError(null);
+    setPdfError(null);
   }, [call.call_id]);
+
+  const handleExportPdf = async () => {
+    setExportingPdf(true);
+    setPdfError(null);
+    try {
+      const response = await fetch(`/api/calls/${call.call_id}/export-pdf`);
+      if (!response.ok) {
+        const errJson = await response.json().catch(() => null);
+        throw new Error(errJson?.error || `Сбой сервера (${response.status})`);
+      }
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `Otchet_Lik28_${call.call_id}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      setPdfSuccess(true);
+      setTimeout(() => setPdfSuccess(false), 3000);
+    } catch (err: any) {
+      console.error('Ошибка экспорта PDF:', err);
+      setPdfError(err.message || 'Не удалось сформировать PDF-отчет');
+      setTimeout(() => setPdfError(null), 6000);
+    } finally {
+      setExportingPdf(false);
+    }
+  };
 
   const handleVk = async () => {
     setSendingVk(true);
@@ -79,6 +113,71 @@ export function CallDetails({
     if (o === 'автоответчик') return 'bg-slate-100 text-slate-700 border-slate-200';
     return 'bg-red-50 text-red-800 border-red-200';
   };
+
+  // Считывание статуса записи из нового JSON-поля анализа ИИ (call.booking_status / call.key_facts?.booking_status)
+  const bookingStatusRaw = useMemo(() => {
+    const direct = (call.booking_status || call.key_facts?.booking_status || '').toLowerCase().trim();
+    if (direct) return direct;
+    const outcome = (call.key_facts?.call_outcome || '').toLowerCase().trim();
+    if (outcome === 'запись') return 'согласие';
+    if (outcome === 'отказ') return 'отказ';
+    if (outcome === 'автоответчик') return 'не применимо';
+    return '';
+  }, [call.booking_status, call.key_facts]);
+
+  const bookingStatusConfig = useMemo(() => {
+    if (!bookingStatusRaw) return null;
+
+    if (bookingStatusRaw === 'согласие' || bookingStatusRaw.includes('соглас')) {
+      return {
+        type: 'consent' as const,
+        label: 'Согласие на запись',
+        badgeText: '✓ Согласие на запись',
+        shortText: 'Согласие',
+        badgeClass: 'bg-emerald-50 text-emerald-800 border-emerald-300 ring-1 ring-emerald-500/20 shadow-3xs',
+        solidClass: 'bg-emerald-600 text-white',
+        icon: CheckCircle2,
+        desc: 'Клиент согласился на предложенное время, запись подтверждена'
+      };
+    }
+
+    if (bookingStatusRaw === 'отказ' || bookingStatusRaw.includes('отказ')) {
+      return {
+        type: 'decline' as const,
+        label: 'Отказ от записи',
+        badgeText: '✗ Отказ от записи',
+        shortText: 'Отказ',
+        badgeClass: 'bg-rose-50 text-rose-800 border-rose-300 ring-1 ring-rose-500/20 shadow-3xs',
+        solidClass: 'bg-rose-600 text-white',
+        icon: XCircle,
+        desc: 'Клиент отказался от предложенных вариантов записи'
+      };
+    }
+
+    if (bookingStatusRaw === 'не применимо') {
+      return {
+        type: 'na' as const,
+        label: 'Запись: Не применимо',
+        badgeText: '— Не применимо',
+        shortText: 'Н/Д',
+        badgeClass: 'bg-slate-100 text-slate-700 border-slate-300 shadow-3xs',
+        solidClass: 'bg-slate-500 text-white',
+        icon: HelpCircle,
+        desc: 'Разговор не состоялся / автоответчик / короткий вызов'
+      };
+    }
+
+    return {
+      type: 'consult' as const,
+      label: 'Консультация (без записи)',
+      badgeText: 'ℹ Консультация',
+      shortText: 'Консультация',
+      badgeClass: 'bg-sky-50 text-sky-800 border-sky-300 ring-1 ring-sky-500/20 shadow-3xs',
+      solidClass: 'bg-sky-600 text-white',
+      icon: HelpCircle,
+      desc: 'Справочный диалог без фиксации слота записи'
+    };
+  }, [bookingStatusRaw]);
 
   const parsedTranscriptLines = useMemo(() => {
     if (!call.transcript) return [];
@@ -235,6 +334,18 @@ export function CallDetails({
               {call.model_used || 'GigaChat:Lite'}
             </span>
 
+            {/* Visual Indicator (Badge) статуса записи из JSON-анализа ИИ */}
+            {bookingStatusConfig && (
+              <span 
+                id={`booking-status-badge-${call.call_id}`}
+                className={`text-[11px] px-2.5 py-0.5 rounded-full font-bold inline-flex items-center gap-1 border transition-all ${bookingStatusConfig.badgeClass}`}
+                title={`Результат анализа ИИ: ${bookingStatusConfig.desc}`}
+              >
+                <bookingStatusConfig.icon className="w-3.5 h-3.5 shrink-0" />
+                <span>{bookingStatusConfig.label}</span>
+              </span>
+            )}
+
             {/* 152-FZ Consent Pill */}
             {call.consent_status === 'active' ? (
               <span className="text-[11px] bg-emerald-100 text-emerald-900 border border-emerald-300 px-2 py-0.5 rounded-full font-semibold inline-flex items-center gap-1">
@@ -306,6 +417,30 @@ export function CallDetails({
             {sentYc ? <Check className="w-3.5 h-3.5" /> : <Database className="w-3.5 h-3.5 text-amber-500" />}
             {sentYc ? 'В Yclients' : 'В Yclients CRM'}
           </button>
+
+          {/* Export Call Summary to PDF for Manager */}
+          <button
+            onClick={handleExportPdf}
+            disabled={exportingPdf}
+            id="export-pdf-report-btn"
+            className={`text-xs font-medium px-3.5 py-1.5 rounded-lg border flex items-center gap-1.5 transition-all shadow-3xs ${
+              pdfSuccess
+                ? 'bg-emerald-50 text-emerald-800 border-emerald-300 font-semibold'
+                : 'bg-white hover:bg-slate-50 text-slate-700 hover:text-indigo-900 border-slate-200'
+            }`}
+            title="Экспорт официального отчета аудита оператора в PDF для управляющего"
+          >
+            {exportingPdf ? (
+              <Zap className="w-3.5 h-3.5 text-amber-500 animate-spin" />
+            ) : pdfSuccess ? (
+              <Check className="w-3.5 h-3.5 text-emerald-600" />
+            ) : (
+              <Download className="w-3.5 h-3.5 text-indigo-600" />
+            )}
+            <span>
+              {exportingPdf ? 'Создание PDF...' : pdfSuccess ? 'Отчет скачан' : 'Экспорт в PDF'}
+            </span>
+          </button>
         </div>
       </div>
 
@@ -320,13 +455,34 @@ export function CallDetails({
           </div>
         )}
 
+        {pdfError && (
+          <div className="lg:col-span-12 bg-rose-50 border border-rose-200 rounded-xl p-4 text-xs text-rose-800 flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold">Ошибка формирования PDF-отчета:</p>
+              <p className="mt-0.5">{pdfError}</p>
+            </div>
+          </div>
+        )}
+
         {/* Left column (Analysis & Recommendations) */}
         <div className="lg:col-span-7 space-y-5">
           {/* Summary Box */}
-          <div className="border border-slate-100 rounded-xl p-4 bg-white">
-            <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
-              Краткое содержание (Резюме диалога)
-            </h3>
+          <div className="border border-slate-100 rounded-xl p-4 bg-white shadow-3xs">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5">
+              <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                Краткое содержание (Резюме диалога)
+              </h3>
+              {bookingStatusConfig && (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] text-slate-400 font-medium">Статус записи:</span>
+                  <span className={`text-[11px] px-2.5 py-0.5 rounded-full font-bold inline-flex items-center gap-1 border ${bookingStatusConfig.badgeClass}`}>
+                    <bookingStatusConfig.icon className="w-3.5 h-3.5 shrink-0" />
+                    <span>{bookingStatusConfig.shortText}</span>
+                  </span>
+                </div>
+              )}
+            </div>
             <p className="text-xs text-slate-700 leading-relaxed">
               {call.summary || 'Резюме не сформировано'}
             </p>
@@ -335,6 +491,37 @@ export function CallDetails({
           {/* Key Facts Box */}
           <div className="border border-slate-100 rounded-xl p-4">
             <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3.5">Ключевые факты</h3>
+
+            {/* Визуальный индикатор (badge) статуса записи из JSON-анализа ИИ */}
+            {bookingStatusConfig && (
+              <div className={`mb-4 p-3 rounded-xl border flex items-start justify-between gap-3 ${
+                bookingStatusConfig.type === 'consent'
+                  ? 'bg-emerald-50/70 border-emerald-200'
+                  : bookingStatusConfig.type === 'decline'
+                  ? 'bg-rose-50/70 border-rose-200'
+                  : 'bg-slate-50 border-slate-200'
+              }`}>
+                <div className="flex items-start gap-2.5">
+                  <div className={`p-1.5 rounded-lg shrink-0 mt-0.5 ${bookingStatusConfig.solidClass}`}>
+                    <bookingStatusConfig.icon className="w-4 h-4 text-white" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                        Статус записи (ИИ-анализ):
+                      </span>
+                      <span className={`text-[11px] font-bold px-2 py-0.5 rounded-md border ${bookingStatusConfig.badgeClass}`}>
+                        {bookingStatusConfig.badgeText}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-700 mt-1 font-normal leading-relaxed">
+                      {bookingStatusConfig.desc}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-3">
                 <div>

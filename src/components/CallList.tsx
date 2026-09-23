@@ -47,7 +47,10 @@ export function CallList({ calls, selectedCallId, onSelectCall }: CallListProps)
 
     const matchesOutcome = 
       outcomeFilter === 'all' || 
-      call.key_facts?.call_outcome === outcomeFilter;
+      call.key_facts?.call_outcome === outcomeFilter ||
+      call.booking_status === outcomeFilter ||
+      (outcomeFilter === 'запись' && (call.booking_status === 'согласие' || call.key_facts?.call_outcome === 'запись')) ||
+      (outcomeFilter === 'отказ' && (call.booking_status === 'отказ' || call.key_facts?.call_outcome === 'отказ'));
 
     return matchesSearch && matchesModel && matchesDispute && matchesOutcome;
   });
@@ -138,6 +141,9 @@ export function CallList({ calls, selectedCallId, onSelectCall }: CallListProps)
             className="w-full text-xs bg-white border border-slate-200 rounded-lg p-1.5 focus:outline-hidden focus:border-slate-400"
           >
             <option value="all">Все итоги</option>
+            <option value="запись">Запись (согласие)</option>
+            <option value="отказ">Отказ клиента</option>
+            <option value="консультация">Консультация</option>
             <option value="успешно">Успешно</option>
             <option value="не успешно">Не успешно</option>
             <option value="перенесён">Перенесён</option>
@@ -225,6 +231,19 @@ export function CallList({ calls, selectedCallId, onSelectCall }: CallListProps)
                     <span className="font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200/60 px-1.5 py-0.2 rounded-sm text-[10px]">
                       {call.model_used || 'GigaChat:Lite'}
                     </span>
+                    {(call.booking_status || call.key_facts?.booking_status) && (
+                      <span className={`font-semibold px-1.5 py-0.2 rounded-sm text-[10px] border ${
+                        (call.booking_status || call.key_facts?.booking_status) === 'согласие'
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                          : (call.booking_status || call.key_facts?.booking_status) === 'отказ'
+                          ? 'bg-rose-50 text-rose-700 border-rose-200'
+                          : 'bg-slate-50 text-slate-600 border-slate-200'
+                      }`}>
+                        {(call.booking_status || call.key_facts?.booking_status) === 'согласие' ? 'Запись: да' :
+                         (call.booking_status || call.key_facts?.booking_status) === 'отказ' ? 'Отказ' :
+                         (call.booking_status || call.key_facts?.booking_status)}
+                      </span>
+                    )}
                   </div>
                   <span>{formatDate(call.timestamp)}</span>
                 </div>

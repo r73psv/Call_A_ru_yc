@@ -24,6 +24,7 @@ import { adminRouter } from './src/routes/admin.js';
 import { isYandexAuthConfigured } from './src/services/yandex-auth.js';
 import { isGigaChatConfigured } from './src/services/gigachat-auth.js';
 import { hydrateFromS3, scheduleSyncToS3, manualSync, getSyncStatus } from './src/services/s3-sync.js';
+import { generateCallAuditPdf } from './src/services/pdfReport.js';
 
 // Setup environment variables
 dotenv.config();
@@ -845,10 +846,12 @@ async function executeSingleModelAttempt(
     return {
       success: true,
       result: {
-        transcript: cleanTranscript,
+        transcript: analysis.formatted_transcript || cleanTranscript,
         summary: analysis.transcript_summary,
+        booking_status: analysis.booking_status || analysis.key_facts?.booking_status,
         key_facts: {
           ...analysis.key_facts,
+          booking_status: analysis.booking_status || analysis.key_facts?.booking_status,
           promises: []
         },
         trigger_phrases: [],
@@ -943,10 +946,12 @@ async function analyzeCallTextOrAudio(
     const analysis = await analyzeWithRetry(anonymizedText, modelToUse, (type, msg) => appendLog(type, 'gigachat', msg));
     appendLog('success', 'gigachat', `Анализ звонка успешно выполнен моделью ${modelToUse}.`);
     return {
-      transcript: cleanTranscript,
+      transcript: analysis.formatted_transcript || cleanTranscript,
       summary: analysis.transcript_summary,
+      booking_status: analysis.booking_status || analysis.key_facts?.booking_status,
       key_facts: {
         ...analysis.key_facts,
+        booking_status: analysis.booking_status || analysis.key_facts?.booking_status,
         promises: []
       },
       trigger_phrases: [],
@@ -1054,9 +1059,12 @@ function getFallbackAnalysis(transcript: string, errorReason?: string): Partial<
   const score = isDispute ? 7 : 9;
   const operatorComment = `Оценка сформирована по тексту стенограммы (${cleanTranscript.length} символов). Администратор вежливо проконсультировал клиента по регламенту «Лик 28».`;
 
+  const bookingStatus = isBooked ? 'согласие' : (isDeclined ? 'отказ' : (isDispute ? 'консультация' : 'консультация'));
+
   return {
     transcript: cleanTranscript,
     summary,
+    booking_status: bookingStatus,
     key_facts: {
       is_dispute: isDispute,
       dispute_reason: isDispute ? 'Зафиксировано недовольство в тексте разговора' : null,
@@ -1064,6 +1072,7 @@ function getFallbackAnalysis(transcript: string, errorReason?: string): Partial<
       tone_client: isDispute ? 'недовольный' : 'нейтральный',
       tone_manager: 'спокойный',
       call_outcome: outcome,
+      booking_status: bookingStatus,
       client_issue: isDispute ? 'Вопрос по обслуживанию' : 'Запись к мастеру / консультация'
     },
     trigger_phrases: triggerPhrases,
@@ -2544,8 +2553,24 @@ app.get('/api/calls', (req, res) => {
     const masked = c.client_phone_masked || maskPhone(rawPhone);
     const consent = getConsentForPhone(rawPhone);
 
+    let bookingStatus = c.booking_status || c.key_facts?.booking_status;
+    if (!bookingStatus) {
+      const outcome = (c.key_facts?.call_outcome || '').toLowerCase();
+      const summary = (c.summary || '').toLowerCase();
+      if (outcome === 'запись' || summary.includes('запись подтверждена') || summary.includes('записан')) {
+        bookingStatus = 'согласие';
+      } else if (outcome === 'отказ' || summary.includes('отказ') || summary.includes('не будет в городе')) {
+        bookingStatus = 'отказ';
+      } else if (outcome === 'автоответчик') {
+        bookingStatus = 'не применимо';
+      } else {
+        bookingStatus = 'консультация';
+      }
+    }
+
     const callCopy: any = {
       ...c,
+      booking_status: bookingStatus,
       client_phone_masked: masked,
       consent_status: consent?.status || (c.status === 'missed' ? 'not_applicable' : 'active'),
       consent_purposes: consent?.purposes || ['quality_control', 'training']
@@ -2582,8 +2607,24 @@ app.get('/api/calls/:id', (req, res) => {
   const masked = call.client_phone_masked || maskPhone(rawPhone);
   const consent = getConsentForPhone(rawPhone);
 
+  let bookingStatus = call.booking_status || call.key_facts?.booking_status;
+  if (!bookingStatus) {
+    const outcome = (call.key_facts?.call_outcome || '').toLowerCase();
+    const summary = (call.summary || '').toLowerCase();
+    if (outcome === 'запись' || summary.includes('запись подтверждена') || summary.includes('записан')) {
+      bookingStatus = 'согласие';
+    } else if (outcome === 'отказ' || summary.includes('отказ') || summary.includes('не будет в городе')) {
+      bookingStatus = 'отказ';
+    } else if (outcome === 'автоответчик') {
+      bookingStatus = 'не применимо';
+    } else {
+      bookingStatus = 'консультация';
+    }
+  }
+
   const callCopy: any = {
     ...call,
+    booking_status: bookingStatus,
     client_phone_masked: masked,
     consent_status: consent?.status || (call.status === 'missed' ? 'not_applicable' : 'active'),
     consent_purposes: consent?.purposes || ['quality_control', 'training']
@@ -2600,6 +2641,54 @@ app.get('/api/calls/:id', (req, res) => {
   }
 
   res.json(callCopy);
+});
+
+// 2.05. EXPORT CALL AUDIT REPORT TO PDF (Для управляющего салоном)
+app.get('/api/calls/:id/export-pdf', (req, res) => {
+  const db = readDb();
+  const userRole = getCurrentUserRole(req);
+  const call = db.calls.find((c: any) => c.call_id === req.params.id);
+  if (!call) {
+    return res.status(404).json({ error: 'Звонок не найден' });
+  }
+
+  const rawPhone = call.client_phone || call.full_phone || '';
+  const masked = call.client_phone_masked || maskPhone(rawPhone);
+
+  let bookingStatus = call.booking_status || call.key_facts?.booking_status;
+  if (!bookingStatus) {
+    const outcome = (call.key_facts?.call_outcome || '').toLowerCase();
+    const summary = (call.summary || '').toLowerCase();
+    if (outcome === 'запись' || summary.includes('запись подтверждена') || summary.includes('записан')) {
+      bookingStatus = 'согласие';
+    } else if (outcome === 'отказ' || summary.includes('отказ') || summary.includes('не будет в городе')) {
+      bookingStatus = 'отказ';
+    } else if (outcome === 'автоответчик') {
+      bookingStatus = 'не применимо';
+    } else {
+      bookingStatus = 'консультация';
+    }
+  }
+
+  const callForReport: any = {
+    ...call,
+    booking_status: bookingStatus,
+    client_phone_masked: masked,
+  };
+
+  try {
+    const doc = generateCallAuditPdf(callForReport);
+    const filename = `Otchet_Lick28_${call.call_id}.pdf`;
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+    doc.pipe(res);
+    doc.end();
+  } catch (error: any) {
+    console.error('Ошибка при генерации PDF отчета:', error);
+    res.status(500).json({ error: `Ошибка формирования PDF: ${error.message || error}` });
+  }
 });
 
 // 2.1. REANALYZE CALL WITH GIGACHAT (152-ФЗ Compliant)
@@ -2631,10 +2720,12 @@ app.post('/api/calls/:id/reanalyze', async (req, res) => {
 
     const updatedCall: CallRecord = {
       ...call,
-      transcript: cleanTranscript,
+      transcript: analysis.formatted_transcript || cleanTranscript,
       summary: analysis.transcript_summary,
+      booking_status: analysis.booking_status || analysis.key_facts?.booking_status,
       key_facts: {
         ...analysis.key_facts,
+        booking_status: analysis.booking_status || analysis.key_facts?.booking_status,
         promises: call.key_facts?.promises || []
       },
       trigger_phrases: call.trigger_phrases || [],
@@ -3387,8 +3478,13 @@ async function startServer() {
               const idx = updatedDb.calls.findIndex((c: any) => c.call_id === 'megafon-real-84462946');
               if (idx !== -1) {
                 updatedDb.calls[idx].summary = analysis.transcript_summary;
+                updatedDb.calls[idx].booking_status = analysis.booking_status || analysis.key_facts?.booking_status;
+                if (analysis.formatted_transcript) {
+                  updatedDb.calls[idx].transcript = analysis.formatted_transcript;
+                }
                 updatedDb.calls[idx].key_facts = {
                   ...analysis.key_facts,
+                  booking_status: analysis.booking_status || analysis.key_facts?.booking_status,
                   promises: updatedDb.calls[idx].key_facts?.promises || []
                 };
                 updatedDb.calls[idx].operator_score = analysis.operator_score;

@@ -16,14 +16,29 @@ export const SYSTEM_PROMPT = `Ты — ведущий эксперт контр�
 Проанализируй предоставленный транскрипт телефонного разговора и верни структурированный ответ СТРОГО в формате JSON.
 
 ОБЯЗАТЕЛЬНЫЕ ТРЕБОВАНИЯ К АНАЛИЗУ:
-1. КРАТКОЕ СОДЕРЖАНИЕ (transcript_summary):
+
+1. СТРОГОЕ РАЗДЕЛЕНИЕ РЕПЛИК ПО РОЛЯМ (Клиент / Менеджер):
+   - Разделяй реплики диалога СТРОГО по двум ролям: «Менеджер» (администратор салона) и «Клиент» (звонящий).
+   - Каждая реплика в поле formatted_transcript ОБЯЗАТЕЛЬНО должна быть записана в формате: 'Имя: Текст' (например, 'Менеджер: Текст реплики' или 'Клиент: Текст реплики').
+   - Каждая реплика пишется с новой строки. КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО склеивать реплики разных говорящих в одну строку или абзац!
+   - Если в предоставленном транскрипте реплики склеены или отсутствует разметка ролей — восстанови диалог и раздели фразы строго по ролям 'Менеджер: ...' и 'Клиент: ...'.
+
+2. КРАТКОЕ СОДЕРЖАНИЕ (transcript_summary):
    - Должно содержать 2-4 предложения и отражать ВСЮ цепочку разговора:
      а) Запрос клиента: мастер, услуга, желаемые дата/время.
      б) Что предложил администратор: доступные слоты, альтернативные мастера.
-     в) ОБЯЗАТЕЛЬНЫЙ КОНЕЧНЫЙ ВЫВОД И ИТОГ: согласился клиент на предложенное время или отказался (с четким указанием причины отказа, например: клиент не будет в городе / время неудобно / подумает / не успевает), была ли оформлена запись или диалог завершился отказом/консультацией.
-   - КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО обрывать резюме на предложении времени без указания решения клиента!
+     в) ОБЯЗАТЕЛЬНЫЙ ФИНАЛЬНЫЙ ВЫВОД И СТАТУС ЗАПИСИ: явно зафиксируй, согласился клиент на запись или отказался (с четким указанием причины: не подходит время, не будет в городе, дорого, подумает и т.д.), либо была ли это только консультация.
+   - КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО обрывать резюме без фиксации согласия или отказа клиента!
 
-2. КЛЮЧЕВЫЕ ФАКТЫ (key_facts):
+3. СТАТУС ЗАПИСИ В ОТДЕЛЬНОМ ПОЛЕ (booking_status):
+   - В обязательном отдельном поле JSON 'booking_status' укажи строго одно из значений:
+     * "согласие" — клиент согласился на предложенное время и подтвердил запись на услугу;
+     * "отказ" — клиент отказался от предложенного времени/записи (не подходит слот, не будет в городе, передумал, отказался);
+     * "консультация" — клиент получил справочную информацию без согласования записи;
+     * "не применимо" — звонок не состоялся, сброс или автоответчик.
+   - Значение поля 'booking_status' должно строго и однозначно отражать согласие или отказ клиента!
+
+4. КЛЮЧЕВЫЕ ФАКТЫ (key_facts):
    - call_outcome: строго одно из значений:
      * "запись" — клиент согласился и запись подтверждена;
      * "отказ" — предложенное время/условия клиенту не подошли, клиент отказался от записи;
@@ -31,26 +46,30 @@ export const SYSTEM_PROMPT = `Ты — ведущий эксперт контр�
      * "перезвон" — договорились о повторном звонке;
      * "отмена" — клиент отменил существующую запись;
      * "автоответчик" — сработал автоответчик или линия недоступна.
+   - booking_status: строго дублирует статус записи ("согласие"|"отказ"|"консультация"|"не применимо").
    - client_issue: конкретная суть запроса клиента (например: "Запись на оформление челки к мастеру Надежде").
 
-3. ОЦЕНКА ОПЕРАТОРА:
+5. ОЦЕНКА ОПЕРАТОРА:
    - Для состоявшегося диалога с клиентом обязательно выставить operator_score (число от 1 до 10) и краткий содержательный комментарий operator_comment.
    - Если в диалоге только автоответчик или сброс — вернуть operator_score: null.
 
-4. РЕГЛАМЕНТ САЛОНА:
+6. РЕГЛАМЕНТ САЛОНА:
    - Официальное название салона: «Лик 28».
    - Не снижать оценку за приветствие с названием «Лик 28».
    - Не выдумывать факты, которых нет в разговоре.
 
 Формат ответа (JSON):
 {
-  "transcript_summary": "Краткое содержание с обязательным указанием решения клиента (согласился / отказался и по какой причине).",
+  "transcript_summary": "Краткое содержание с обязательным указанием финального статуса записи (согласие / отказ и по какой конкретно причине).",
+  "booking_status": "согласие|отказ|консультация|не применимо",
+  "formatted_transcript": "Менеджер: Добрый день, салон «Лик 28», слушаю вас.\\nКлиент: Здравствуйте, хочу записаться...\\nМенеджер: Да, конечно...",
   "key_facts": {
     "is_dispute": false,
     "dispute_reason": null,
     "tone_client": "нейтральный|позитивный|негативный",
     "tone_manager": "нейтральный|позитивный|негативный",
     "call_outcome": "запись|отказ|консультация|перезвон|отмена|автоответчик",
+    "booking_status": "согласие|отказ|консультация|не применимо",
     "client_issue": "суть обращения"
   },
   "operator_score": 1-10 | null,
@@ -343,19 +362,50 @@ function parseGigaChatJson(text: string): AnalysisResult {
   }
 
   const parsed = JSON.parse(clean);
-  const isAutoAnswer = parsed.key_facts?.call_outcome === 'автоответчик';
+  const isAutoAnswer = parsed.key_facts?.call_outcome === 'автоответчик' || parsed.booking_status === 'не применимо';
   const score = typeof parsed.operator_score === 'number'
     ? parsed.operator_score
     : (isAutoAnswer ? null : 9);
 
+  // Normalize booking_status ('согласие' | 'отказ' | 'консультация' | 'не применимо')
+  let bookingStatus: string = String(parsed.booking_status || parsed.key_facts?.booking_status || '').toLowerCase().trim();
+  const rawOutcome: string = String(parsed.key_facts?.call_outcome || '').toLowerCase().trim();
+
+  if (!bookingStatus || !['согласие', 'отказ', 'консультация', 'не применимо'].includes(bookingStatus)) {
+    if (bookingStatus.includes('соглас') || rawOutcome === 'запись' || rawOutcome === 'успешно') {
+      bookingStatus = 'согласие';
+    } else if (bookingStatus.includes('отказ') || rawOutcome === 'отказ') {
+      bookingStatus = 'отказ';
+    } else if (rawOutcome === 'автоответчик' || isAutoAnswer) {
+      bookingStatus = 'не применимо';
+    } else {
+      bookingStatus = 'консультация';
+    }
+  }
+
+  // Ensure call_outcome is consistent with booking_status
+  let outcome = rawOutcome || 'консультация';
+  if (bookingStatus === 'согласие' && outcome !== 'запись') {
+    outcome = 'запись';
+  } else if (bookingStatus === 'отказ' && outcome !== 'отказ') {
+    outcome = 'отказ';
+  }
+
+  const formattedTranscript = typeof parsed.formatted_transcript === 'string' && parsed.formatted_transcript.trim().length > 0
+    ? parsed.formatted_transcript.trim()
+    : undefined;
+
   return {
     transcript_summary: parsed.transcript_summary || parsed.summary || 'Краткое содержание диалога с результатом обращения.',
+    booking_status: bookingStatus,
+    formatted_transcript: formattedTranscript,
     key_facts: {
       is_dispute: Boolean(parsed.key_facts?.is_dispute),
       dispute_reason: parsed.key_facts?.dispute_reason || null,
       tone_client: parsed.key_facts?.tone_client || 'нейтральный',
       tone_manager: parsed.key_facts?.tone_manager || 'нейтральный',
-      call_outcome: parsed.key_facts?.call_outcome || 'консультация',
+      call_outcome: outcome,
+      booking_status: bookingStatus,
       client_issue: parsed.key_facts?.client_issue || 'Обращение в салон «Лик 28»',
     },
     operator_score: score,
@@ -372,13 +422,16 @@ function generateLocalFallbackAnalysis(transcript: string, model: GigaChatModel)
   
   if (isAuto) {
     return {
-      transcript_summary: 'Разговор не состоялся (сработал автоответчик или короткое системное сообщение).',
+      transcript_summary: 'Разговор не состоялся (сработал автоответчик или короткое системное сообщение). Запись не оформлена.',
+      booking_status: 'не применимо',
+      formatted_transcript: transcript,
       key_facts: {
         is_dispute: false,
         dispute_reason: null,
         tone_client: 'нейтральный',
         tone_manager: 'нейтральный',
         call_outcome: 'автоответчик',
+        booking_status: 'не применимо',
         client_issue: 'Звонок не состоялся / автоответчик',
       },
       operator_score: null,
@@ -392,20 +445,24 @@ function generateLocalFallbackAnalysis(transcript: string, model: GigaChatModel)
   const isBooking = !isDeclined && (lower.includes('записали') || lower.includes('до встречи') || lower.includes('ждем вас'));
 
   const outcome = isBooking ? 'запись' : (isDeclined ? 'отказ' : (isDispute ? 'перезвон' : 'консультация'));
+  const bookingStatus = isBooking ? 'согласие' : (isDeclined ? 'отказ' : (isDispute ? 'консультация' : 'консультация'));
   const outcomeText = isBooking
     ? 'Запись успешно подтверждена и зафиксирована.'
     : (isDeclined
-      ? 'Клиент отказалась от предложенных вариантов записи из-за невозможности быть в городе / неподходящего времени. Разговор завершился без оформления записи.'
+      ? 'Клиент отказалась от предложенных вариантов записи из-за невозможности быть в городе / неподходящего времени. Разговор завершился отказом от записи.'
       : 'Разговор завершился справочной консультацией.');
 
   return {
     transcript_summary: `Клиент обратилась в салон красоты «Лик 28» по поводу записи на услуги. Администратор проверила график мастера и предложила доступные варианты. Итог: ${outcomeText}`,
+    booking_status: bookingStatus,
+    formatted_transcript: transcript,
     key_facts: {
       is_dispute: isDispute,
       dispute_reason: isDispute ? 'Претензия или отмена записи' : null,
       tone_client: isDispute ? 'негативный' : 'позитивный',
       tone_manager: 'позитивный',
       call_outcome: outcome,
+      booking_status: bookingStatus,
       client_issue: 'Запись на процедуры в салоне «Лик 28»',
     },
     operator_score: isDispute ? 8 : 10,

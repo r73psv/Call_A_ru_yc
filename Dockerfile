@@ -21,6 +21,7 @@ RUN npm ci
 # Copy application configuration and source code
 COPY tsconfig.json vite.config.ts index.html metadata.json ./
 COPY src ./src
+COPY fonts ./fonts
 COPY server.ts ./
 
 # Compile frontend and backend in production mode with sufficient memory
@@ -83,6 +84,7 @@ RUN npm ci --omit=dev && npm cache clean --force
 
 # Copy pre-compiled distribution assets from builder
 COPY --from=builder --chown=node:node /app/dist ./dist
+COPY --chown=node:node fonts ./fonts
 
 # Ensure ownership across the whole application directory
 RUN chown -R node:node /app

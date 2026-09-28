@@ -166,8 +166,8 @@ export function NotificationToastContainer({
           try {
             const data: SystemNotification = JSON.parse(e.data);
             addToast(data);
-          } catch (err) {
-            console.error('Failed to parse SSE notification payload:', err);
+          } catch (err: any) {
+            console.warn('Failed to parse SSE notification payload:', err?.message || err);
           }
         });
 

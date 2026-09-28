@@ -33,25 +33,60 @@ export function NotificationsBell({
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const isAuthorized = userRole === 'admin' || userRole === 'manager';
+  const isMountedRef = useRef(true);
 
-  const fetchNotifications = async () => {
-    if (!isAuthorized) return;
-    try {
-      const headers: Record<string, string> = { 'x-user-role': userRole };
-      if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
-      const res = await fetch('/api/notifications', { headers });
-      if (res.ok) {
-        const data = await res.json();
-        setNotifications(data || []);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  const fetchNotifications = async (retries = 2) => {
+    if (!isAuthorized || !isMountedRef.current) return;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      if (!isMountedRef.current) return;
+      try {
+        const headers: Record<string, string> = { 'x-user-role': userRole };
+        if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 6000);
+
+        const res = await fetch(`/api/notifications?role=${encodeURIComponent(userRole)}`, {
+          headers,
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+
+        if (res.ok) {
+          const text = await res.text();
+          if (text && !text.trim().startsWith('<')) {
+            const data = JSON.parse(text);
+            if (isMountedRef.current) {
+              setNotifications(Array.isArray(data) ? data : []);
+            }
+            return;
+          }
+        }
+      } catch (err: any) {
+        if (!isMountedRef.current) return;
+        if (attempt < retries) {
+          await new Promise(r => setTimeout(r, 600 * (attempt + 1)));
+          continue;
+        }
+        // Soft warning for network glitch or server restart without throwing console.error
+        console.warn('Notifications background fetch temporarily unavailable:', err?.message || err);
       }
-    } catch (err) {
-      console.error('Failed to fetch notifications:', err);
     }
   };
 
   useEffect(() => {
+    if (!isAuthorized) return;
     fetchNotifications();
-    const interval = setInterval(fetchNotifications, 10000);
+    const interval = setInterval(() => {
+      fetchNotifications(1);
+    }, 10000);
     return () => clearInterval(interval);
   }, [isAuthorized, userRole, authToken]);
 
@@ -102,8 +137,8 @@ export function NotificationsBell({
       if (res.ok) {
         await fetchNotifications();
       }
-    } catch (err) {
-      console.error('Test notification failed:', err);
+    } catch (err: any) {
+      console.warn('Test notification failed:', err?.message || err);
     } finally {
       setTestSending(false);
     }

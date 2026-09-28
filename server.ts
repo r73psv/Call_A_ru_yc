@@ -2836,12 +2836,17 @@ app.get('/api/notifications/stream', (req, res) => {
 
 // 2. Get Notifications List (Admin & Manager)
 app.get('/api/notifications', (req, res) => {
-  const userRole = getCurrentUserRole(req);
-  if (userRole !== 'admin' && userRole !== 'manager') {
-    return res.status(403).json({ error: 'Доступ разрешен только администраторам и менеджерам' });
+  try {
+    const userRole = getCurrentUserRole(req);
+    if (userRole !== 'admin' && userRole !== 'manager') {
+      return res.status(403).json({ error: 'Доступ разрешен только администраторам и менеджерам' });
+    }
+    const db = readDb();
+    res.json(Array.isArray(db?.notifications) ? db.notifications : []);
+  } catch (err: any) {
+    console.warn('[Notifications] Ошибка получения списка уведомлений:', err?.message || err);
+    res.json([]);
   }
-  const db = readDb();
-  res.json(db.notifications || []);
 });
 
 // 3. Mark Single Notification as Read

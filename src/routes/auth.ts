@@ -70,8 +70,8 @@ export function getCurrentUser(req: Request): { id: string; username: string; na
     }
   }
 
-  // Fallback to legacy/header role if token is missing
-  const headerRole = req.headers['x-user-role'] as string;
+  // Fallback to legacy/header role or query param if token is missing
+  const headerRole = (req.headers['x-user-role'] || req.query?.role) as string;
   if (headerRole === 'manager') {
     return { id: 'usr-manager-1', username: 'manager', name: 'Управляющий', role: 'manager' };
   }

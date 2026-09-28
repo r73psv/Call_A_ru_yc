@@ -6,11 +6,13 @@
 import React, { useState } from 'react';
 import { 
   Key, Users, Lock, ShieldCheck, ShieldAlert, 
-  Terminal, Sparkles, AlertCircle, RefreshCw 
+  Terminal, Sparkles, AlertCircle, RefreshCw, Trash2
 } from 'lucide-react';
 import { CredentialsSettings } from './admin/CredentialsSettings.js';
 import { UsersManagement } from './admin/UsersManagement.js';
 import { AdminPasswordChange } from './admin/AdminPasswordChange.js';
+import { AutoCleanupSettingsCard } from './admin/AutoCleanupSettingsCard.js';
+import { LogsViewer } from './LogsViewer.js';
 import { LogEntry } from '../types.js';
 
 interface AdminPanelProps {
@@ -28,7 +30,7 @@ export function AdminPanel({
   logs = [],
   onClearLogs,
 }: AdminPanelProps) {
-  const [adminTab, setAdminTab] = useState<'credentials' | 'users' | 'password' | 'logs'>('credentials');
+  const [adminTab, setAdminTab] = useState<'credentials' | 'cleanup' | 'users' | 'password' | 'logs'>('credentials');
 
   return (
     <div className="space-y-6" id="admin-panel-root">
@@ -74,6 +76,19 @@ export function AdminPanel({
 
           <button
             type="button"
+            onClick={() => setAdminTab('cleanup')}
+            className={`px-4 py-2 rounded-xl font-bold transition-all flex items-center gap-2 ${
+              adminTab === 'cleanup'
+                ? 'bg-emerald-600 text-white shadow-xs'
+                : 'bg-white/10 text-slate-200 hover:bg-white/20'
+            }`}
+            id="admin-tab-cleanup"
+          >
+            <Trash2 className="w-4 h-4 text-amber-400" /> Автоочистка 152-ФЗ (Логи & Файлы)
+          </button>
+
+          <button
+            type="button"
             onClick={() => setAdminTab('users')}
             className={`px-4 py-2 rounded-xl font-bold transition-all flex items-center gap-2 ${
               adminTab === 'users'
@@ -97,6 +112,19 @@ export function AdminPanel({
           >
             <Lock className="w-4 h-4" /> Пароль администратора
           </button>
+
+          <button
+            type="button"
+            onClick={() => setAdminTab('logs')}
+            className={`px-4 py-2 rounded-xl font-bold transition-all flex items-center gap-2 ${
+              adminTab === 'logs'
+                ? 'bg-emerald-600 text-white shadow-xs'
+                : 'bg-white/10 text-slate-200 hover:bg-white/20'
+            }`}
+            id="admin-tab-logs"
+          >
+            <Terminal className="w-4 h-4 text-emerald-300" /> Журнал аудита ({logs.length})
+          </button>
         </div>
       </div>
 
@@ -106,12 +134,20 @@ export function AdminPanel({
           <CredentialsSettings authToken={authToken} />
         )}
 
+        {adminTab === 'cleanup' && (
+          <AutoCleanupSettingsCard authToken={authToken} />
+        )}
+
         {adminTab === 'users' && (
           <UsersManagement authToken={authToken} currentUserId={currentUserId} />
         )}
 
         {adminTab === 'password' && (
           <AdminPasswordChange authToken={authToken} adminUsername={adminUsername} />
+        )}
+
+        {adminTab === 'logs' && (
+          <LogsViewer logs={logs} onClearLogs={onClearLogs} />
         )}
       </div>
     </div>

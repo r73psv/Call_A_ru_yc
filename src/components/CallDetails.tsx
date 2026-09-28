@@ -8,8 +8,8 @@ import {
   AlertTriangle, Check, ShieldAlert, Star, 
   ThumbsUp, Volume2, MessageSquare, 
   MessageCircle, Database, Download, ExternalLink, Zap,
-  ShieldCheck, Lock, Clock, Mic, FileText, Smartphone, HeartHandshake,
-  CheckCircle2, XCircle, HelpCircle
+  ShieldCheck, Lock, Clock, Mic, FileText, FileSpreadsheet, Smartphone, HeartHandshake,
+  CheckCircle2, XCircle, HelpCircle, Tag, Tags, Plus, X, Bookmark
 } from 'lucide-react';
 import { CallRecord } from '../types.js';
 import { ReanalyzeButton } from './ReanalyzeButton.js';
@@ -22,6 +22,41 @@ interface CallDetailsProps {
   onReanalyze?: (id: string) => Promise<boolean>;
   onCallUpdated?: (updated: CallRecord) => void;
   userRole?: string;
+}
+
+const PRESET_TAGS = [
+  { name: 'Запись', color: 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100' },
+  { name: 'Продажа', color: 'bg-blue-50 text-blue-800 border-blue-300 hover:bg-blue-100' },
+  { name: 'Жалоба', color: 'bg-rose-50 text-rose-800 border-rose-300 hover:bg-rose-100' },
+  { name: 'Конфликт', color: 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100' },
+  { name: 'VIP-клиент', color: 'bg-purple-50 text-purple-800 border-purple-300 hover:bg-purple-100' },
+  { name: 'Перезвонить', color: 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100' },
+  { name: 'Консультация', color: 'bg-sky-50 text-sky-800 border-sky-300 hover:bg-sky-100' },
+  { name: 'Спам', color: 'bg-slate-100 text-slate-800 border-slate-300 hover:bg-slate-200' },
+  { name: 'Срочно', color: 'bg-red-50 text-red-800 border-red-300 hover:bg-red-100' },
+];
+
+export function getTagBadgeStyle(tag: string) {
+  const lower = tag.toLowerCase();
+  if (lower.includes('жалоб') || lower.includes('конфликт') || lower.includes('претензи') || lower.includes('срочн') || lower.includes('отказ')) {
+    return 'bg-rose-50 text-rose-700 border-rose-200';
+  }
+  if (lower.includes('запис') || lower.includes('соглас') || lower.includes('успешн')) {
+    return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+  }
+  if (lower.includes('продаж') || lower.includes('сертификат') || lower.includes('допродаж')) {
+    return 'bg-blue-50 text-blue-700 border-blue-200';
+  }
+  if (lower.includes('vip') || lower.includes('вип') || lower.includes('лояльн') || lower.includes('постоян')) {
+    return 'bg-purple-50 text-purple-700 border-purple-200';
+  }
+  if (lower.includes('перезвон') || lower.includes('уточн') || lower.includes('в работ')) {
+    return 'bg-amber-50 text-amber-700 border-amber-200';
+  }
+  if (lower.includes('спам') || lower.includes('ошиб')) {
+    return 'bg-slate-100 text-slate-700 border-slate-300';
+  }
+  return 'bg-indigo-50 text-indigo-700 border-indigo-200';
 }
 
 export function CallDetails({ 
@@ -37,41 +72,110 @@ export function CallDetails({
   const [sendingYc, setSendingYc] = useState(false);
   const [sentYc, setSentYc] = useState(false);
   const [vkError, setVkError] = useState<string | null>(null);
-  const [exportingPdf, setExportingPdf] = useState(false);
-  const [pdfSuccess, setPdfSuccess] = useState(false);
-  const [pdfError, setPdfError] = useState<string | null>(null);
+  const [exportingFormat, setExportingFormat] = useState<'pdf' | 'csv' | null>(null);
+  const [exportSuccessFormat, setExportSuccessFormat] = useState<'pdf' | 'csv' | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  // Categorical Tag Management State
+  const [customTagInput, setCustomTagInput] = useState('');
+  const [isTagSubmitting, setIsTagSubmitting] = useState(false);
+  const [tagError, setTagError] = useState<string | null>(null);
+
+  const handleAddTag = async (tagToAdd: string) => {
+    const clean = tagToAdd.trim().replace(/^#/, '');
+    if (!clean) return;
+    const currentTags = call.tags || [];
+    if (currentTags.includes(clean)) return;
+
+    setIsTagSubmitting(true);
+    setTagError(null);
+    try {
+      const response = await fetch(`/api/calls/${call.call_id}/tags`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tag: clean }),
+      });
+      if (!response.ok) {
+        const errJson = await response.json().catch(() => null);
+        throw new Error(errJson?.error || 'Не удалось сохранить тег');
+      }
+      const data = await response.json();
+      const updatedCall: CallRecord = {
+        ...call,
+        tags: data.tags || [...currentTags, clean],
+      };
+      if (onCallUpdated) onCallUpdated(updatedCall);
+      setCustomTagInput('');
+    } catch (err: any) {
+      console.error('Ошибка добавления тега:', err);
+      setTagError(err.message || 'Ошибка добавления тега');
+      setTimeout(() => setTagError(null), 4000);
+    } finally {
+      setIsTagSubmitting(false);
+    }
+  };
+
+  const handleRemoveTag = async (tagToRemove: string) => {
+    setIsTagSubmitting(true);
+    setTagError(null);
+    try {
+      const response = await fetch(`/api/calls/${call.call_id}/tags/${encodeURIComponent(tagToRemove)}`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) {
+        const errJson = await response.json().catch(() => null);
+        throw new Error(errJson?.error || 'Не удалось удалить тег');
+      }
+      const data = await response.json();
+      const updatedCall: CallRecord = {
+        ...call,
+        tags: data.tags || (call.tags || []).filter(t => t !== tagToRemove),
+      };
+      if (onCallUpdated) onCallUpdated(updatedCall);
+    } catch (err: any) {
+      console.error('Ошибка удаления тега:', err);
+      setTagError(err.message || 'Ошибка удаления тега');
+      setTimeout(() => setTagError(null), 4000);
+    } finally {
+      setIsTagSubmitting(false);
+    }
+  };
 
   React.useEffect(() => {
     setVkError(null);
-    setPdfError(null);
+    setExportError(null);
+    setTagError(null);
   }, [call.call_id]);
 
-  const handleExportPdf = async () => {
-    setExportingPdf(true);
-    setPdfError(null);
+  const handleExport = async (format: 'pdf' | 'csv') => {
+    setExportingFormat(format);
+    setExportError(null);
     try {
-      const response = await fetch(`/api/calls/${call.call_id}/export-pdf`);
+      const endpoint = format === 'pdf' 
+        ? `/api/calls/${call.call_id}/export-pdf`
+        : `/api/calls/${call.call_id}/export-csv`;
+      const response = await fetch(endpoint);
       if (!response.ok) {
         const errJson = await response.json().catch(() => null);
-        throw new Error(errJson?.error || `Сбой сервера (${response.status})`);
+        throw new Error(errJson?.error || `Сбой сервера при формировании ${format.toUpperCase()} (${response.status})`);
       }
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `Otchet_Lik28_${call.call_id}.pdf`;
+      link.download = `Otchet_Lik28_${call.call_id}.${format}`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
-      setPdfSuccess(true);
-      setTimeout(() => setPdfSuccess(false), 3000);
+      setExportSuccessFormat(format);
+      setTimeout(() => setExportSuccessFormat(null), 3000);
     } catch (err: any) {
-      console.error('Ошибка экспорта PDF:', err);
-      setPdfError(err.message || 'Не удалось сформировать PDF-отчет');
-      setTimeout(() => setPdfError(null), 6000);
+      console.error(`Ошибка экспорта ${format}:`, err);
+      setExportError(err.message || `Не удалось сформировать ${format.toUpperCase()}-отчет`);
+      setTimeout(() => setExportError(null), 6000);
     } finally {
-      setExportingPdf(false);
+      setExportingFormat(null);
     }
   };
 
@@ -265,6 +369,15 @@ export function CallDetails({
               <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">
                 152-ФЗ: Н/Д (Звонок не состоялся)
               </span>
+              {call.tags && call.tags.length > 0 && call.tags.map((tag) => (
+                <span
+                  key={tag}
+                  className={`text-[11px] px-2 py-0.5 rounded-full font-semibold border inline-flex items-center gap-1 shadow-3xs ${getTagBadgeStyle(tag)}`}
+                >
+                  <Tag className="w-3 h-3 opacity-70" />
+                  <span>{tag}</span>
+                </span>
+              ))}
             </div>
             <h1 className="text-lg font-bold text-slate-800">
               {call.client_phone_masked || call.client_name || 'Клиент'} ↔ {call.operator_name || 'Оператор'}
@@ -312,6 +425,51 @@ export function CallDetails({
                   <li className="text-xs text-slate-500">Рекомендаций нет</li>
                 )}
               </ul>
+            </div>
+
+            {/* Quick Tagging for Unsuccessful Calls */}
+            <div className="pt-3 border-t border-slate-200/60">
+              <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Теги вызова:</span>
+              <div className="flex flex-wrap gap-1.5 mb-2.5">
+                {call.tags && call.tags.length > 0 ? (
+                  call.tags.map((tag) => (
+                    <span
+                      key={tag}
+                      className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-md border ${getTagBadgeStyle(tag)}`}
+                    >
+                      <span>{tag}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveTag(tag)}
+                        disabled={isTagSubmitting}
+                        className="hover:opacity-70 p-0.5"
+                      >
+                        <X className="w-2.5 h-2.5" />
+                      </button>
+                    </span>
+                  ))
+                ) : (
+                  <span className="text-[11px] text-slate-400 italic">Теги не установлены</span>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {['Перезвонить', 'Спам', 'Жалоба', 'Срочно'].map((preset) => {
+                  const hasTag = call.tags?.includes(preset);
+                  return (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => hasTag ? handleRemoveTag(preset) : handleAddTag(preset)}
+                      disabled={isTagSubmitting}
+                      className={`text-[11px] font-medium px-2 py-0.5 rounded-md border transition-all ${
+                        hasTag ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-700 hover:bg-slate-50 border-slate-200'
+                      }`}
+                    >
+                      {hasTag ? `✓ ${preset}` : `+ ${preset}`}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
         </div>
@@ -373,6 +531,18 @@ export function CallDetails({
               <Zap className="w-3 h-3 text-amber-500" />
               {(call.tokens_used?.total_tokens || 1200).toLocaleString('ru-RU')} токенов
             </span>
+
+            {/* Manager Tags Badges in Header */}
+            {call.tags && call.tags.length > 0 && call.tags.map((tag) => (
+              <span
+                key={tag}
+                className={`text-[11px] px-2 py-0.5 rounded-full font-semibold border inline-flex items-center gap-1 shadow-3xs ${getTagBadgeStyle(tag)}`}
+                title={`Тег менеджера: ${tag}`}
+              >
+                <Tag className="w-3 h-3 opacity-70" />
+                <span>{tag}</span>
+              </span>
+            ))}
           </div>
 
           <h1 className="text-lg font-bold text-slate-800">
@@ -418,29 +588,54 @@ export function CallDetails({
             {sentYc ? 'В Yclients' : 'В Yclients CRM'}
           </button>
 
-          {/* Export Call Summary to PDF for Manager */}
-          <button
-            onClick={handleExportPdf}
-            disabled={exportingPdf}
-            id="export-pdf-report-btn"
-            className={`text-xs font-medium px-3.5 py-1.5 rounded-lg border flex items-center gap-1.5 transition-all shadow-3xs ${
-              pdfSuccess
-                ? 'bg-emerald-50 text-emerald-800 border-emerald-300 font-semibold'
-                : 'bg-white hover:bg-slate-50 text-slate-700 hover:text-indigo-900 border-slate-200'
-            }`}
-            title="Экспорт официального отчета аудита оператора в PDF для управляющего"
-          >
-            {exportingPdf ? (
-              <Zap className="w-3.5 h-3.5 text-amber-500 animate-spin" />
-            ) : pdfSuccess ? (
-              <Check className="w-3.5 h-3.5 text-emerald-600" />
-            ) : (
-              <Download className="w-3.5 h-3.5 text-indigo-600" />
-            )}
-            <span>
-              {exportingPdf ? 'Создание PDF...' : pdfSuccess ? 'Отчет скачан' : 'Экспорт в PDF'}
-            </span>
-          </button>
+          {/* 152-ФЗ Export Suite (PDF / CSV) */}
+          <div className="flex items-center rounded-lg border border-slate-200 bg-white p-0.5 shadow-3xs" id="export-actions-group">
+            {/* PDF Export Button */}
+            <button
+              onClick={() => handleExport('pdf')}
+              disabled={exportingFormat !== null}
+              id="export-pdf-report-btn"
+              className={`text-xs font-medium px-3 py-1.5 rounded-md flex items-center gap-1.5 transition-all ${
+                exportSuccessFormat === 'pdf'
+                  ? 'bg-emerald-50 text-emerald-800 font-semibold'
+                  : 'text-slate-700 hover:text-indigo-900 hover:bg-slate-50'
+              }`}
+              title="Экспорт официального отчета аудита оператора в PDF (А4, с графиками и подписью управляющего, 152-ФЗ)"
+            >
+              {exportingFormat === 'pdf' ? (
+                <Zap className="w-3.5 h-3.5 text-amber-500 animate-spin" />
+              ) : exportSuccessFormat === 'pdf' ? (
+                <Check className="w-3.5 h-3.5 text-emerald-600" />
+              ) : (
+                <FileText className="w-3.5 h-3.5 text-rose-600" />
+              )}
+              <span>{exportingFormat === 'pdf' ? 'Создание PDF...' : exportSuccessFormat === 'pdf' ? 'PDF скачан' : 'PDF'}</span>
+            </button>
+
+            <div className="h-4 w-px bg-slate-200 mx-0.5" />
+
+            {/* CSV Export Button */}
+            <button
+              onClick={() => handleExport('csv')}
+              disabled={exportingFormat !== null}
+              id="export-csv-report-btn"
+              className={`text-xs font-medium px-3 py-1.5 rounded-md flex items-center gap-1.5 transition-all ${
+                exportSuccessFormat === 'csv'
+                  ? 'bg-emerald-50 text-emerald-800 font-semibold'
+                  : 'text-slate-700 hover:text-emerald-900 hover:bg-slate-50'
+              }`}
+              title="Экспорт детального отчета в CSV формат для Excel/CRM (с маскированием данных по 152-ФЗ)"
+            >
+              {exportingFormat === 'csv' ? (
+                <Zap className="w-3.5 h-3.5 text-amber-500 animate-spin" />
+              ) : exportSuccessFormat === 'csv' ? (
+                <Check className="w-3.5 h-3.5 text-emerald-600" />
+              ) : (
+                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+              )}
+              <span>{exportingFormat === 'csv' ? 'Создание CSV...' : exportSuccessFormat === 'csv' ? 'CSV скачан' : 'CSV (152-ФЗ)'}</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -455,18 +650,150 @@ export function CallDetails({
           </div>
         )}
 
-        {pdfError && (
+        {exportError && (
           <div className="lg:col-span-12 bg-rose-50 border border-rose-200 rounded-xl p-4 text-xs text-rose-800 flex items-start gap-3">
             <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
             <div>
-              <p className="font-bold">Ошибка формирования PDF-отчета:</p>
-              <p className="mt-0.5">{pdfError}</p>
+              <p className="font-bold">Ошибка экспорта отчета:</p>
+              <p className="mt-0.5">{exportError}</p>
             </div>
           </div>
         )}
 
         {/* Left column (Analysis & Recommendations) */}
         <div className="lg:col-span-7 space-y-5">
+          {/* Categorical Manager Tags Card */}
+          <div className="border border-slate-200/90 rounded-2xl p-4 bg-linear-to-r from-slate-50/70 via-white to-indigo-50/20 shadow-xs space-y-3.5" id="call-tags-management-card">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg border border-indigo-200 shadow-3xs">
+                  <Tags className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                    <span>Категориальные теги звонка</span>
+                    <span className="text-[10px] font-mono font-bold px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
+                      {call.tags?.length || 0}
+                    </span>
+                  </h3>
+                  <p className="text-[11px] text-slate-500">Метки для категоризации, поиска и последующего анализа управляющим</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Currently assigned tags */}
+            <div className="flex flex-wrap items-center gap-1.5 min-h-[38px] p-2.5 bg-white rounded-xl border border-slate-200/80 shadow-3xs">
+              {call.tags && call.tags.length > 0 ? (
+                call.tags.map((tag) => (
+                  <span
+                    key={tag}
+                    id={`tag-badge-${tag}`}
+                    className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-lg border shadow-3xs transition-all ${getTagBadgeStyle(tag)}`}
+                  >
+                    <Tag className="w-3 h-3 opacity-70" />
+                    <span>{tag}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveTag(tag)}
+                      disabled={isTagSubmitting}
+                      title={`Удалить тег «${tag}»`}
+                      className="hover:opacity-75 hover:scale-115 transition-transform p-0.5 rounded-full cursor-pointer text-current ml-0.5"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                ))
+              ) : (
+                <span className="text-xs text-slate-400 italic flex items-center gap-1.5 py-0.5">
+                  <Bookmark className="w-3.5 h-3.5 text-slate-300" />
+                  Теги еще не присвоены. Выберите из частых тегов ниже или добавьте свой.
+                </span>
+              )}
+            </div>
+
+            {/* Quick Presets */}
+            <div>
+              <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
+                Быстрые теги (нажмите для добавления/удаления):
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {PRESET_TAGS.map((preset) => {
+                  const isAlreadyAdded = call.tags?.includes(preset.name);
+                  return (
+                    <button
+                      key={preset.name}
+                      type="button"
+                      onClick={() => isAlreadyAdded ? handleRemoveTag(preset.name) : handleAddTag(preset.name)}
+                      disabled={isTagSubmitting}
+                      id={`preset-tag-btn-${preset.name}`}
+                      className={`text-xs font-medium px-2.5 py-1 rounded-lg border transition-all flex items-center gap-1 cursor-pointer ${
+                        isAlreadyAdded
+                          ? 'bg-slate-900 text-white border-slate-900 shadow-3xs font-semibold'
+                          : preset.color
+                      }`}
+                      title={isAlreadyAdded ? `Удалить тег «${preset.name}»` : `Добавить тег «${preset.name}»`}
+                    >
+                      {isAlreadyAdded ? (
+                        <>
+                          <Check className="w-3 h-3 text-emerald-400" />
+                          <span>{preset.name}</span>
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="w-3 h-3" />
+                          <span>{preset.name}</span>
+                        </>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Custom Tag Input */}
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleAddTag(customTagInput);
+              }}
+              className="flex items-center gap-2 pt-0.5"
+            >
+              <div className="relative flex-1">
+                <input
+                  type="text"
+                  value={customTagInput}
+                  onChange={(e) => setCustomTagInput(e.target.value)}
+                  placeholder="Добавить свой тег (например: Предоплата, Корпоративный, Экспресс)..."
+                  className="w-full text-xs bg-white border border-slate-200 rounded-lg pl-3 pr-8 py-2 text-slate-800 placeholder-slate-400 focus:outline-hidden focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/20"
+                  maxLength={40}
+                  disabled={isTagSubmitting}
+                />
+                {customTagInput && (
+                  <button
+                    type="button"
+                    onClick={() => setCustomTagInput('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+              <button
+                type="submit"
+                disabled={isTagSubmitting || !customTagInput.trim()}
+                id="btn-add-custom-tag"
+                className="text-xs font-semibold px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg transition-all flex items-center gap-1.5 shadow-3xs shrink-0 cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Добавить</span>
+              </button>
+            </form>
+
+            {tagError && (
+              <p className="text-xs text-rose-600 font-medium">{tagError}</p>
+            )}
+          </div>
+
           {/* Summary Box */}
           <div className="border border-slate-100 rounded-xl p-4 bg-white shadow-3xs">
             <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5">

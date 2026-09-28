@@ -111,7 +111,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-72141173",
@@ -185,7 +188,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-72137534",
@@ -224,7 +230,10 @@
         "total_tokens": 3965
       },
       "sent_to_vk": true,
-      "vk_sent_at": "2026-07-28T05:50:37.205Z"
+      "vk_sent_at": "2026-07-28T05:50:37.205Z",
+      "tags": [
+        "Продажа"
+      ]
     },
     {
       "call_id": "megafon-real-72127317",
@@ -263,7 +272,10 @@
         "total_tokens": 2769
       },
       "sent_to_vk": true,
-      "vk_sent_at": "2026-07-28T05:50:35.677Z"
+      "vk_sent_at": "2026-07-28T05:50:35.677Z",
+      "tags": [
+        "Продажа"
+      ]
     },
     {
       "call_id": "megafon-real-72137462",
@@ -298,7 +310,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-72126558",
@@ -337,7 +352,11 @@
         "total_tokens": 3257
       },
       "sent_to_vk": true,
-      "vk_sent_at": "2026-07-28T05:50:36.160Z"
+      "vk_sent_at": "2026-07-28T05:50:36.160Z",
+      "tags": [
+        "Продажа",
+        "VIP-клиент"
+      ]
     },
     {
       "call_id": "megafon-real-72125083",
@@ -456,7 +475,10 @@
         "total_tokens": 3860
       },
       "sent_to_vk": true,
-      "vk_sent_at": "2026-07-28T05:50:36.556Z"
+      "vk_sent_at": "2026-07-28T05:50:36.556Z",
+      "tags": [
+        "Продажа"
+      ]
     },
     {
       "call_id": "megafon-real-72073862",
@@ -530,7 +552,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-72073726",
@@ -641,7 +666,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-72040412",
@@ -752,7 +780,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-72015489",
@@ -787,7 +818,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-72025273",
@@ -822,7 +856,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-72010261",
@@ -857,7 +894,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-72015167",
@@ -892,7 +932,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-72002922",
@@ -967,7 +1010,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71981585",
@@ -1041,7 +1087,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-72003483",
@@ -1076,7 +1125,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71985857",
@@ -1150,7 +1202,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71990704",
@@ -1189,7 +1244,10 @@
         "total_tokens": 3357
       },
       "sent_to_vk": true,
-      "vk_sent_at": "2026-07-28T05:50:35.727Z"
+      "vk_sent_at": "2026-07-28T05:50:35.727Z",
+      "tags": [
+        "Продажа"
+      ]
     },
     {
       "call_id": "megafon-real-71971238",
@@ -1380,7 +1438,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71929183",
@@ -1415,7 +1476,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71924452",
@@ -1495,7 +1559,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71921186",
@@ -1530,7 +1597,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71927856",
@@ -1565,7 +1635,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71923116",
@@ -1600,7 +1673,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71935708",
@@ -1635,7 +1711,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71893428",
@@ -1713,7 +1792,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71893204",
@@ -1785,7 +1867,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71898982",
@@ -2200,7 +2285,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71898816",
@@ -2387,7 +2475,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71876649",
@@ -2460,7 +2551,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71872471",
@@ -2837,7 +2931,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71834326",
@@ -2872,7 +2969,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71823214",
@@ -3059,7 +3159,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71787107",
@@ -3094,7 +3197,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71786379",
@@ -3129,7 +3235,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71781441",
@@ -3316,7 +3425,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71775642",
@@ -3351,7 +3463,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71769720",
@@ -3386,7 +3501,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71771692",
@@ -3991,7 +4109,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71731935",
@@ -4140,7 +4261,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71726529",
@@ -4327,7 +4451,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71733102",
@@ -4400,7 +4527,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71719368",
@@ -4739,7 +4869,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71698980",
@@ -4774,7 +4907,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71695631",
@@ -5578,7 +5714,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71626862",
@@ -5691,7 +5830,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71635702",
@@ -5954,7 +6096,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71618846",
@@ -6486,7 +6631,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71486784",
@@ -6521,7 +6669,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71495620",
@@ -6712,7 +6863,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71452503",
@@ -6915,7 +7069,10 @@
         "prompt_tokens": 772,
         "completion_tokens": 183,
         "total_tokens": 955
-      }
+      },
+      "tags": [
+        "Продажа"
+      ]
     },
     {
       "call_id": "megafon-real-71417740",
@@ -7067,7 +7224,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71407498",
@@ -7216,7 +7376,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71389853",
@@ -7251,7 +7414,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71391731",
@@ -7406,7 +7572,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71377040",
@@ -7746,7 +7915,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71303700",
@@ -8017,7 +8189,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71252057",
@@ -8128,7 +8303,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71259348",
@@ -8315,7 +8493,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71190869",
@@ -8350,7 +8531,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71144110",
@@ -8385,7 +8569,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71173574",
@@ -8458,7 +8645,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71159667",
@@ -8493,7 +8683,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71159500",
@@ -8642,7 +8835,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71143021",
@@ -8791,7 +8987,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71145244",
@@ -8940,7 +9139,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71154742",
@@ -8975,7 +9177,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71128822",
@@ -9048,7 +9253,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71147786",
@@ -9083,7 +9291,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71147694",
@@ -9802,7 +10013,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71039987",
@@ -9875,7 +10089,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71031904",
@@ -10100,7 +10317,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-71008054",
@@ -10287,7 +10507,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70991623",
@@ -10778,7 +11001,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70932722",
@@ -11003,7 +11229,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70919924",
@@ -11114,7 +11343,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70933434",
@@ -11187,7 +11419,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70930438",
@@ -11450,7 +11685,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70919677",
@@ -11903,7 +12141,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70914184",
@@ -11976,7 +12217,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70918022",
@@ -12353,7 +12597,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70826087",
@@ -12388,7 +12635,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70854132",
@@ -12423,7 +12673,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70854502",
@@ -12534,7 +12787,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70761373",
@@ -12569,7 +12825,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70778005",
@@ -12680,7 +12939,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70766642",
@@ -12759,7 +13021,10 @@
         "prompt_tokens": 364,
         "completion_tokens": 231,
         "total_tokens": 595
-      }
+      },
+      "tags": [
+        "Продажа"
+      ]
     },
     {
       "call_id": "megafon-real-70730541",
@@ -12794,7 +13059,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70741095",
@@ -12829,7 +13097,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70729090",
@@ -12900,7 +13171,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70719710",
@@ -12971,7 +13245,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70715775",
@@ -13042,7 +13319,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70706749",
@@ -13077,7 +13357,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70705673",
@@ -13148,7 +13431,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70704143",
@@ -13183,7 +13469,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70696856",
@@ -13326,7 +13615,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70687390",
@@ -13361,7 +13653,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70679586",
@@ -13468,7 +13763,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70673617",
@@ -13797,7 +14095,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70653308",
@@ -13832,7 +14133,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70638879",
@@ -13979,7 +14283,10 @@
         "prompt_tokens": 486,
         "completion_tokens": 367,
         "total_tokens": 853
-      }
+      },
+      "tags": [
+        "Продажа"
+      ]
     },
     {
       "call_id": "megafon-real-70559423",
@@ -14128,7 +14435,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70559560",
@@ -14163,7 +14473,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70542450",
@@ -14467,7 +14780,10 @@
         "prompt_tokens": 522,
         "completion_tokens": 171,
         "total_tokens": 693
-      }
+      },
+      "tags": [
+        "Жалоба"
+      ]
     },
     {
       "call_id": "megafon-call-89101",
@@ -14537,7 +14853,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70432802",
@@ -14648,7 +14967,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70424474",
@@ -15101,7 +15423,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70402404",
@@ -15136,7 +15461,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70412731",
@@ -15323,7 +15651,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70420324",
@@ -15738,7 +16069,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70369543",
@@ -15773,7 +16107,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70367057",
@@ -15846,7 +16183,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 72,
         "total_tokens": 363
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70351909",
@@ -15919,7 +16259,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70342797",
@@ -15954,7 +16297,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70349086",
@@ -16065,7 +16411,10 @@
         "prompt_tokens": 291,
         "completion_tokens": 71,
         "total_tokens": 362
-      }
+      },
+      "tags": [
+        "Перезвонить"
+      ]
     },
     {
       "call_id": "megafon-real-70342254",

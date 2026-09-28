@@ -2,6 +2,7 @@ import PDFDocument from 'pdfkit';
 import fs from 'fs';
 import path from 'path';
 import { CallRecord } from '../types.js';
+import { anonymizeTranscript, maskPhone } from './anonymize.js';
 
 function getFontPaths(): { regular: string; bold: string } {
   const localRegular = path.join(process.cwd(), 'fonts', 'LiberationSans-Regular.ttf');
@@ -44,7 +45,7 @@ function formatDuration(sec?: number): string {
   return `${m} мин. ${s} сек.`;
 }
 
-export function generateCallAuditPdf(call: CallRecord): InstanceType<typeof PDFDocument> {
+export function generateCallAuditPdf(call: CallRecord, userRole: string = 'manager'): InstanceType<typeof PDFDocument> {
   const doc = new PDFDocument({
     size: 'A4',
     margin: 36,
@@ -52,7 +53,7 @@ export function generateCallAuditPdf(call: CallRecord): InstanceType<typeof PDFD
     info: {
       Title: `Отчет аудита звонка ${call.call_id} — Салон «Лик 28»`,
       Author: 'Салон красоты «Лик 28» — Речевая аналитика GigaChat',
-      Subject: 'Отчет контроля качества обслуживания и работы оператора',
+      Subject: 'Отчет контроля качества обслуживания и работы оператора (152-ФЗ)',
     },
   });
 
@@ -70,6 +71,11 @@ export function generateCallAuditPdf(call: CallRecord): InstanceType<typeof PDFD
       doc.addPage();
     }
   }
+
+  // 152-ФЗ Маскирование телефона в зависимости от прав доступа
+  const rawPhone = call.client_phone || (call as any).full_phone || '';
+  const maskedPhone = call.client_phone_masked || maskPhone(rawPhone);
+  const clientPhone = (userRole === 'admin' && rawPhone) ? rawPhone : maskedPhone;
 
   // 1. Header Banner
   doc.rect(margin, margin, contentWidth, 54).fill('#1e1b4b');
@@ -94,7 +100,7 @@ export function generateCallAuditPdf(call: CallRecord): InstanceType<typeof PDFD
 
   doc.font('AppFont').fontSize(8).fillColor('#64748b');
   doc.text(
-    `Дата формирования отчета: ${nowSamara} (Самара, UTC+4)  •  Конфиденциально (152-ФЗ)  •  Модель: ${call.model_used || 'GigaChat'}`,
+    `Дата формирования отчета: ${nowSamara} (Самара, UTC+4)  •  Маскирование 152-ФЗ: Активно  •  Модель: ${call.model_used || 'GigaChat'}`,
     margin,
     doc.y
   );
@@ -105,7 +111,7 @@ export function generateCallAuditPdf(call: CallRecord): InstanceType<typeof PDFD
   doc.rect(margin, tableY, contentWidth, 68).fillAndStroke('#f8fafc', '#e2e8f0');
 
   doc.font('AppFontBold').fontSize(8.5).fillColor('#475569');
-  doc.text('РЕКВИЗИТЫ ЗВОНКА', margin + 12, tableY + 8);
+  doc.text('РЕКВИЗИТЫ ЗВОНКА (МАСКИРОВАНО ПО 152-ФЗ)', margin + 12, tableY + 8);
 
   doc.font('AppFont').fontSize(8.5).fillColor('#1e293b');
   const col1X = margin + 12;
@@ -123,8 +129,8 @@ export function generateCallAuditPdf(call: CallRecord): InstanceType<typeof PDFD
   doc.font('AppFont').text(formatDuration(call.duration_seconds));
 
   // Row 2
-  doc.font('AppFontBold').text('Клиент: ', col1X, tableY + 44, { continued: true });
-  doc.font('AppFont').text(call.client_phone_masked || call.client_name || 'Не указан');
+  doc.font('AppFontBold').text('Клиент (152-ФЗ): ', col1X, tableY + 44, { continued: true });
+  doc.font('AppFont').text(clientPhone);
 
   doc.font('AppFontBold').text('Администратор: ', col2X, tableY + 44, { continued: true });
   doc.font('AppFont').text(call.operator_name || 'Администратор Лик 28');
@@ -272,12 +278,20 @@ export function generateCallAuditPdf(call: CallRecord): InstanceType<typeof PDFD
     doc.moveDown(0.5);
   }
 
-  // 8. Transcript (Стенограмма диалога по ролям)
-  if (call.transcript && call.transcript.trim().length > 0) {
+  // 8. Transcript (Стенограмма диалога по ролям с обезличиванием по 152-ФЗ)
+  if (userRole === 'viewer') {
+    ensureSpace(50);
+    const trHeaderY = doc.y;
+    doc.rect(margin, trHeaderY, contentWidth, 18).fill('#f1f5f9');
+    doc.font('AppFontBold').fontSize(8.5).fillColor('#334155').text('СТЕНОГРАММА ДИАЛОГА', margin + 10, trHeaderY + 5);
+    doc.y = trHeaderY + 24;
+    doc.font('AppFont').fontSize(8.5).fillColor('#94a3b8').text('[Доступ к стенограмме ограничен правилами 152-ФЗ для роли Наблюдатель]', margin + 10, doc.y);
+    doc.moveDown(0.5);
+  } else if (call.transcript && call.transcript.trim().length > 0) {
     ensureSpace(70);
     const trHeaderY = doc.y;
     doc.rect(margin, trHeaderY, contentWidth, 18).fill('#f1f5f9');
-    doc.font('AppFontBold').fontSize(8.5).fillColor('#334155').text('СТЕНОГРАММА ДИАЛОГА (ПО РОЛЯМ)', margin + 10, trHeaderY + 5);
+    doc.font('AppFontBold').fontSize(8.5).fillColor('#334155').text('СТЕНОГРАММА ДИАЛОГА (ОБЕЗЛИЧЕНА ПО 152-ФЗ)', margin + 10, trHeaderY + 5);
 
     doc.y = trHeaderY + 24;
 
@@ -285,7 +299,8 @@ export function generateCallAuditPdf(call: CallRecord): InstanceType<typeof PDFD
     lines.forEach((line) => {
       ensureSpace(22);
       const isManager = line.startsWith('Менеджер:') || line.startsWith('Администратор:') || line.startsWith('Оператор:');
-      const cleanLine = line.replace(/^(Менеджер:|Клиент:|Администратор:|Оператор:|Неизвестный:)\s*/i, '');
+      const cleanLineRaw = line.replace(/^(Менеджер:|Клиент:|Администратор:|Оператор:|Неизвестный:)\s*/i, '');
+      const cleanLine = anonymizeTranscript(cleanLineRaw);
       const speakerLabel = isManager ? 'Менеджер: ' : (line.startsWith('Клиент:') ? 'Клиент: ' : '');
 
       if (isManager) {

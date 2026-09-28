@@ -51,9 +51,15 @@ services:
       - YCLIENTS_USER_TOKEN=${YCLIENTS_USER_TOKEN}
       - YCLIENTS_PARTNER_TOKEN=${YCLIENTS_PARTNER_TOKEN}
       - YCLIENTS_SALON_ID=${YCLIENTS_SALON_ID}
+      # 152-ФЗ Регламентные сроки хранения логов и временных файлов
+      - TTL_LOG_DAYS=${TTL_LOG_DAYS:-30}
+      - TTL_TEMP_DAYS=${TTL_TEMP_DAYS:-30}
+      - TTL_AUDIO_DAYS=${TTL_AUDIO_DAYS:-30}
     volumes:
       - ./data:/app/data
       - ./keys:/app/keys:ro
+      - ./temp:/app/temp
+      - ./uploads:/app/uploads
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/api/health || exit 1"]
       interval: 30s

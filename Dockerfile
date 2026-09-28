@@ -42,8 +42,9 @@ WORKDIR /app
 # - dumb-init: Lightweight PID 1 init system for graceful signal handling (SIGTERM/SIGINT)
 # - wget & curl: Health checks, container probes, and debugging
 # - ffmpeg: Audio transcoding and format normalization for SpeechKit
+# - ttf-liberation: Cyrillic typography for 152-ФЗ PDF generation and reports
 # - ca-certificates: TLS verification with Russian Trusted CA (Минцифры) for Sber GigaChat
-RUN apk add --no-cache tzdata dumb-init wget curl ffmpeg ca-certificates && \
+RUN apk add --no-cache tzdata dumb-init wget curl ffmpeg ttf-liberation ca-certificates && \
     mkdir -p /usr/local/share/ca-certificates/ && \
     (wget --no-check-certificate -qO /usr/local/share/ca-certificates/russian_trusted_root_ca.crt https://gu-st.ru/content/lending/russian_trusted_root_ca_pem.crt 2>/dev/null || true) && \
     (wget --no-check-certificate -qO /usr/local/share/ca-certificates/russian_trusted_sub_ca.crt https://gu-st.ru/content/lending/russian_trusted_sub_ca_pem.crt 2>/dev/null || true) && \
@@ -59,6 +60,7 @@ ENV DATA_PATH_ENC=/app/data/data-store.enc
 ENV CONSENT_PATH=/app/data/consents.enc
 ENV CONSENTS_PATH=/app/data/consents.enc
 ENV YC_FOLDER_ID=
+ENV YC_API_KEY=
 ENV YC_SERVICE_ACCOUNT_KEY_FILE=/app/keys/authorized_key.json
 ENV YC_STORAGE_BUCKET=
 ENV YC_STORAGE_ENDPOINT=https://storage.yandexcloud.net
@@ -69,14 +71,18 @@ ENV S3_KEY_PREFIX=lik28/data/
 ENV S3_SYNC_INTERVAL_SEC=300
 ENV GIGACHAT_MODEL=GigaChat:Lite
 ENV GIGACHAT_SCOPE=GIGACHAT_API_PERS
+ENV TTL_LOG_DAYS=30
+ENV TTL_TEMP_DAYS=30
+ENV TTL_AUDIO_DAYS=30
 ENV NODE_OPTIONS=--max-old-space-size=2048
 ENV NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
 
-# Create required directories for persistent encrypted storage and key files
-RUN mkdir -p /app/keys /app/data /app/temp && \
-    chown -R node:node /app/data /app/keys /app/temp && \
+# Create required directories for persistent encrypted storage, key files, temp & uploads (152-ФЗ)
+RUN mkdir -p /app/keys /app/data /app/temp /app/uploads && \
+    chown -R node:node /app/data /app/keys /app/temp /app/uploads && \
     chmod 700 /app/keys && \
-    chmod 750 /app/data
+    chmod 750 /app/data && \
+    chmod 770 /app/temp /app/uploads
 
 # Copy package manifests and install only production dependencies
 COPY package*.json ./
@@ -89,8 +95,8 @@ COPY --chown=node:node fonts ./fonts
 # Ensure ownership across the whole application directory
 RUN chown -R node:node /app
 
-# Volumes for persistent encrypted database (152-ФЗ) and credentials
-VOLUME ["/app/data", "/app/keys"]
+# Volumes for persistent encrypted database (152-ФЗ), credentials, temporary files, and uploads
+VOLUME ["/app/data", "/app/keys", "/app/temp", "/app/uploads"]
 
 # Run as non-root user for security hardening
 USER node

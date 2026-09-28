@@ -7,7 +7,7 @@ import * as fs from 'fs/promises';
 import { existsSync, mkdirSync, readFileSync } from 'fs';
 import path from 'path';
 import { encrypt, decrypt } from './crypto-store.js';
-import { CallRecord, LogEntry, SystemConfig, AccessLogEntry, User } from '../types.js';
+import { CallRecord, LogEntry, SystemConfig, AccessLogEntry, User, SystemNotification } from '../types.js';
 import { getInitialUsers } from './user-store.js';
 
 const DATA_PATH_ENC = process.env.DATA_PATH_ENC || path.join(process.cwd(), 'data', 'data-store.enc');
@@ -19,6 +19,7 @@ export interface AppDatabase {
   logs: LogEntry[];
   access_log?: AccessLogEntry[];
   users?: User[];
+  notifications?: SystemNotification[];
   config: SystemConfig;
 }
 
@@ -146,6 +147,9 @@ export function readStoreSync(): AppDatabase {
         if (!parsed.users || parsed.users.length === 0) {
           parsed.users = getInitialUsers();
         }
+        if (!Array.isArray(parsed.notifications)) {
+          parsed.notifications = [];
+        }
         memCache = parsed;
         return memCache;
       }
@@ -162,6 +166,9 @@ export function readStoreSync(): AppDatabase {
       if (parsed && Array.isArray(parsed.calls)) {
         if (!parsed.users || parsed.users.length === 0) {
           parsed.users = getInitialUsers();
+        }
+        if (!Array.isArray(parsed.notifications)) {
+          parsed.notifications = [];
         }
         memCache = parsed;
         return memCache;

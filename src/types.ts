@@ -141,6 +141,9 @@ export interface CallRecord {
   vk_sent_at?: string;
   sent_to_yclients?: boolean;
   yclients_sent_at?: string;
+
+  // Categorical Manager Tags
+  tags?: string[];
 }
 
 export interface ConsentRecord {
@@ -196,6 +199,23 @@ export interface YclientsConfig {
   enabled: boolean;
 }
 
+export interface AutoCleanupSettings {
+  enabled: boolean;
+  logRetentionDays: number; // default: 30 days
+  tempFilesRetentionDays: number; // default: 30 days
+  autoRunDaily: boolean; // default: true
+  lastRunTimestamp?: string;
+  lastRunStats?: {
+    logsCleaned: number;
+    accessLogsCleaned: number;
+    tempFilesCleaned: number;
+    tempBytesCleaned: number;
+    audioCleaned: number;
+    contentCleaned: number;
+    timestamp: string;
+  };
+}
+
 export interface SystemConfig {
   activeModel: ModelType | GigaChatModel;
   default_gigachat_model: GigaChatModel;
@@ -214,6 +234,7 @@ export interface SystemConfig {
     fullDeleteDays: number;
     accessLogDays: number;
   };
+  autoCleanup?: AutoCleanupSettings;
 }
 
 export interface LogEntry {
@@ -223,6 +244,35 @@ export interface LogEntry {
   module: 'speechkit' | 'gigachat' | 'consent' | 'cleanup' | 'megafon' | 'vk' | 'yclients' | 'system' | 'security' | string;
   message: string;
   details?: string;
+}
+
+export interface HourlyStatItem {
+  hour: number;
+  label: string;
+  total: number;
+  booked: number;
+  declined: number;
+  consultation: number;
+  disputes: number;
+  avgScore: number;
+  missed: number;
+}
+
+export interface SentimentTrendItem {
+  dateKey: string;
+  label: string;
+  shortLabel: string;
+  dayOfWeek: string;
+  total: number;
+  positive: number;
+  negative: number;
+  neutral: number;
+  posPct: number;
+  negPct: number;
+  neuPct: number;
+  nsi: number;
+  avgScore: number | null;
+  disputes: number;
 }
 
 export interface DashboardStats {
@@ -237,6 +287,8 @@ export interface DashboardStats {
     client: { neutral: number; discontent: number; aggressive: number };
     manager: { neutral: number; calm: number; defensive: number };
   };
+  hourlyStats?: HourlyStatItem[];
+  sentimentTrends?: SentimentTrendItem[];
 }
 
 export interface AnalysisResult {
@@ -256,3 +308,24 @@ export interface AnalysisResult {
   operator_comment: string;
   recommendations: string | string[];
 }
+
+export type NotificationType = 'call_analyzed' | 'dispute_detected' | 'booking_confirmed' | 'call_failed';
+
+export interface SystemNotification {
+  id: string;
+  call_id: string;
+  timestamp: string;
+  type: NotificationType;
+  title: string;
+  message: string;
+  client_name: string;
+  client_phone_masked?: string;
+  operator_name: string;
+  operator_score?: number | null;
+  booking_status?: 'согласие' | 'отказ' | 'консультация' | 'не применимо' | string;
+  is_dispute?: boolean;
+  duration_seconds?: number;
+  model_used?: string;
+  read?: boolean;
+}
+

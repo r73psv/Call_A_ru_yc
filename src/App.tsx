@@ -6,23 +6,23 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
-  PhoneCall, Settings, Terminal, Activity, RefreshCw, 
+  PhoneCall, Settings, Activity, RefreshCw, 
   ShieldAlert, AlertCircle, HardDrive, Shield, ShieldCheck,
-  Lock, Unlock, UserCheck, HeartHandshake, Bot, Sparkles, 
-  CheckCircle2, LogOut, User, Key, KeyRound
+  Lock, Unlock, UserCheck, HeartHandshake, Sparkles, 
+  CheckCircle2, LogOut, User, Key, KeyRound, BarChart3
 } from 'lucide-react';
 
 import { StatsGrid } from './components/StatsGrid.js';
 import { CallList } from './components/CallList.js';
 import { CallDetails } from './components/CallDetails.js';
-import { MegafonSimulator } from './components/MegafonSimulator.js';
-import { LogsViewer } from './components/LogsViewer.js';
 import { RecordingNotice } from './components/RecordingNotice.js';
 import { ConsentsTable } from './components/ConsentsTable.js';
 import { ModelSelector } from './components/ModelSelector.js';
 import { LoginModal } from './components/LoginModal.js';
 import { AdminPasswordPromptModal } from './components/AdminPasswordPromptModal.js';
 import { AdminPanel } from './components/AdminPanel.js';
+import { NotificationToastContainer } from './components/NotificationToastContainer.js';
+import { NotificationsBell } from './components/NotificationsBell.js';
 
 import { CallRecord, DashboardStats, SystemConfig, LogEntry, GigaChatModel, UserRole } from './types.js';
 
@@ -106,7 +106,7 @@ export default function App() {
   const [selectedCallId, setSelectedCallId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'list' | 'details' | 'consents' | 'simulator' | 'admin' | 'logs'>('list');
+  const [activeTab, setActiveTab] = useState<'list' | 'details' | 'stats' | 'consents' | 'admin'>('list');
 
   // Auth & Session state
   const [authToken, setAuthToken] = useState<string | null>(() => {
@@ -133,6 +133,25 @@ export default function App() {
   const [isAdminUnlocked, setIsAdminUnlocked] = useState(false);
   const [isAdminPasswordModalOpen, setIsAdminPasswordModalOpen] = useState(false);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(() => !localStorage.getItem('callqa_auth_token'));
+
+  // Notification sound preference (for Toast chimes)
+  const [soundEnabled, setSoundEnabled] = useState(() => {
+    return localStorage.getItem('callqa_sound_enabled') !== 'false';
+  });
+
+  const handleToggleSound = () => {
+    setSoundEnabled(prev => {
+      const next = !prev;
+      localStorage.setItem('callqa_sound_enabled', String(next));
+      return next;
+    });
+  };
+
+  const handleSelectCallFromNotification = (callId: string) => {
+    setSelectedCallId(callId);
+    setActiveTab('details');
+    loadData(true);
+  };
 
   // Synchronize state with backend APIs
   const loadData = async (silent = false) => {
@@ -237,31 +256,6 @@ export default function App() {
       await loadData(true);
     } catch (err: any) {
       console.error('Failed to update model:', err);
-    }
-  };
-
-  const handleSimulateWebhook = async (payload: {
-    client_phone: string;
-    client_name: string;
-    operator_name: string;
-    transcriptPresetId: string;
-    duration: number;
-    status: string;
-  }) => {
-    try {
-      const result = await safeFetchJson<any>('/api/calls/simulate-webhook', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      }, authToken, userRole);
-      
-      if (result.call_id) {
-        setSelectedCallId(result.call_id);
-        setActiveTab('details');
-      }
-      await loadData(true);
-    } catch (err: any) {
-      alert(`Ошибка симуляции: ${err.message}`);
     }
   };
 
@@ -417,6 +411,17 @@ export default function App() {
               </button>
             )}
 
+            {/* Notifications Center Bell (Admins and Managers) */}
+            {(userRole === 'admin' || userRole === 'manager') && (
+              <NotificationsBell
+                userRole={userRole}
+                authToken={authToken}
+                onSelectCall={handleSelectCallFromNotification}
+                soundEnabled={soundEnabled}
+                onToggleSound={handleToggleSound}
+              />
+            )}
+
             <button
               onClick={() => loadData(true)}
               className="p-1.5 hover:bg-slate-100 rounded-lg border border-slate-200 text-slate-600 transition-colors"
@@ -473,9 +478,6 @@ export default function App() {
           </div>
         )}
 
-        {/* Statistics Grid */}
-        <StatsGrid stats={stats} />
-
         {/* Workspace Card with Navigation Tabs */}
         <div className="bg-white border border-slate-200 rounded-2xl shadow-xs overflow-hidden min-h-[600px] flex flex-col" id="unified-workspace-container">
           
@@ -506,6 +508,18 @@ export default function App() {
             </button>
 
             <button
+              id="tab-btn-stats"
+              onClick={() => setActiveTab('stats')}
+              className={`px-5 py-3.5 text-xs font-bold border-b-2 transition-all flex items-center gap-2 ${
+                activeTab === 'stats'
+                  ? 'border-emerald-600 text-emerald-700 bg-white'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <BarChart3 className="w-4 h-4" /> Аналитика & Статистика
+            </button>
+
+            <button
               id="tab-btn-consents"
               onClick={() => setActiveTab('consents')}
               className={`px-5 py-3.5 text-xs font-bold border-b-2 transition-all flex items-center gap-2 ${
@@ -516,20 +530,6 @@ export default function App() {
             >
               <ShieldCheck className="w-4 h-4" /> Реестр согласий (152-ФЗ)
             </button>
-
-            {(userRole === 'admin' || userRole === 'manager') && (
-              <button
-                id="tab-btn-simulator"
-                onClick={() => setActiveTab('simulator')}
-                className={`px-5 py-3.5 text-xs font-bold border-b-2 transition-all flex items-center gap-2 ${
-                  activeTab === 'simulator'
-                    ? 'border-emerald-600 text-emerald-700 bg-white'
-                    : 'border-transparent text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                <Bot className="w-4 h-4" /> Симулятор АТС Мегафон
-              </button>
-            )}
 
             {/* Protected Admin Panel Tab */}
             {userRole === 'admin' && (
@@ -553,21 +553,6 @@ export default function App() {
                     Пароль
                   </span>
                 )}
-              </button>
-            )}
-
-            {/* Audit Logs Tab (for admin only) */}
-            {userRole === 'admin' && (
-              <button
-                id="tab-btn-logs"
-                onClick={() => setActiveTab('logs')}
-                className={`px-5 py-3.5 text-xs font-bold border-b-2 transition-all flex items-center gap-2 ${
-                  activeTab === 'logs'
-                    ? 'border-emerald-600 text-emerald-700 bg-white'
-                    : 'border-transparent text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                <Terminal className="w-4 h-4" /> Журнал аудита ({logs.length})
               </button>
             )}
           </div>
@@ -631,6 +616,19 @@ export default function App() {
                 </motion.div>
               )}
 
+              {activeTab === 'stats' && (
+                <motion.div
+                  key="tab-workspace-stats"
+                  initial={{ opacity: 0, y: 5 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -5 }}
+                  transition={{ duration: 0.12 }}
+                  className="min-h-[500px]"
+                >
+                  <StatsGrid stats={stats} calls={calls} />
+                </motion.div>
+              )}
+
               {activeTab === 'consents' && (
                 <motion.div
                   key="tab-workspace-consents"
@@ -641,21 +639,6 @@ export default function App() {
                   className="min-h-[500px]"
                 >
                   <ConsentsTable userRole={userRole} />
-                </motion.div>
-              )}
-
-              {activeTab === 'simulator' && (
-                <motion.div
-                  key="tab-workspace-simulator"
-                  initial={{ opacity: 0, y: 5 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -5 }}
-                  transition={{ duration: 0.12 }}
-                >
-                  <MegafonSimulator 
-                    onSimulate={handleSimulateWebhook} 
-                    activeModel={config?.default_gigachat_model || 'GigaChat:Lite'} 
-                  />
                 </motion.div>
               )}
 
@@ -674,21 +657,6 @@ export default function App() {
                     adminUsername={currentUser?.username}
                     logs={logs}
                     onClearLogs={handleClearLogs}
-                  />
-                </motion.div>
-              )}
-
-              {activeTab === 'logs' && userRole === 'admin' && (
-                <motion.div
-                  key="tab-workspace-logs"
-                  initial={{ opacity: 0, y: 5 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -5 }}
-                  transition={{ duration: 0.12 }}
-                >
-                  <LogsViewer 
-                    logs={logs} 
-                    onClearLogs={handleClearLogs} 
                   />
                 </motion.div>
               )}
@@ -711,6 +679,15 @@ export default function App() {
         authToken={authToken}
         onSuccess={handleAdminPasswordSuccess}
         onCancel={() => setIsAdminPasswordModalOpen(false)}
+      />
+
+      {/* Real-time Toast Notifications for Admins and Managers */}
+      <NotificationToastContainer
+        userRole={userRole}
+        authToken={authToken}
+        onSelectCall={handleSelectCallFromNotification}
+        onNewNotification={() => loadData(true)}
+        soundEnabled={soundEnabled}
       />
 
       {/* Footer */}

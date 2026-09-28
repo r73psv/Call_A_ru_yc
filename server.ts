@@ -9,7 +9,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import dotenv from 'dotenv';
-import { CallRecord, LogEntry, SystemConfig, ModelType, DashboardStats, KeyFacts, VkConfig, YclientsConfig, GigaChatModel } from './src/types.js';
+import { CallRecord, LogEntry, SystemConfig, ModelType, DashboardStats, KeyFacts, VkConfig, YclientsConfig, GigaChatModel, SystemNotification, NotificationType, UserRole } from './src/types.js';
 import { transcribeWithRetry, fixDuplicatedTranscript, refineTranscriptRoles } from './src/services/speechkit.js';
 import { analyzeWithRetry, getGigaChatQueueStatus } from './src/services/gigachat.js';
 import { anonymizeTranscript, maskPhone } from './src/services/anonymize.js';
@@ -25,6 +25,7 @@ import { isYandexAuthConfigured } from './src/services/yandex-auth.js';
 import { isGigaChatConfigured } from './src/services/gigachat-auth.js';
 import { hydrateFromS3, scheduleSyncToS3, manualSync, getSyncStatus } from './src/services/s3-sync.js';
 import { generateCallAuditPdf } from './src/services/pdfReport.js';
+import { generateCallCsv } from './src/services/csvExport.js';
 
 // Setup environment variables
 dotenv.config();
@@ -212,6 +213,87 @@ function appendLog(
   }
   writeDb(db);
   return newLog;
+}
+
+// Real-time SSE Clients registry for Toast notifications (Admins & Managers)
+interface SseNotificationClient {
+  id: string;
+  role: UserRole;
+  res: express.Response;
+}
+const sseNotificationClients = new Map<string, SseNotificationClient>();
+
+function broadcastNotification(notification: SystemNotification) {
+  const data = JSON.stringify(notification);
+  for (const [clientId, client] of sseNotificationClients.entries()) {
+    // Deliver toasts strictly to admins and managers per requirement
+    if (client.role === 'admin' || client.role === 'manager') {
+      try {
+        client.res.write(`event: notification\ndata: ${data}\n\n`);
+      } catch (err) {
+        sseNotificationClients.delete(clientId);
+      }
+    }
+  }
+}
+
+// Generate, persist, and broadcast Toast Notification when a call is analyzed
+function notifyCallAnalyzed(call: CallRecord): SystemNotification {
+  const db = readDb();
+  if (!Array.isArray(db.notifications)) {
+    db.notifications = [];
+  }
+
+  const isDispute = !!call.key_facts?.is_dispute;
+  const isBooked = call.booking_status === 'согласие' || call.key_facts?.call_outcome === 'запись';
+  const isFailed = call.status === 'failed';
+  const isMissed = call.status === 'missed';
+
+  let type: NotificationType = 'call_analyzed';
+  let title = 'Завершен анализ звонка';
+  if (isDispute) {
+    type = 'dispute_detected';
+    title = '⚠️ Зафиксирован спор в диалоге';
+  } else if (isBooked) {
+    type = 'booking_confirmed';
+    title = '✓ Успешная запись клиента';
+  } else if (isFailed) {
+    type = 'call_failed';
+    title = '✕ Ошибка обработки звонка';
+  } else if (isMissed) {
+    type = 'call_analyzed';
+    title = '📞 Пропущенный вызов';
+  }
+
+  const message = call.summary || (isFailed ? 'Не удалось выполнить транскрибацию или анализ' : 'Диалог проанализирован');
+
+  const notif: SystemNotification = {
+    id: `notif-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    call_id: call.call_id,
+    timestamp: new Date().toISOString(),
+    type,
+    title,
+    message,
+    client_name: call.client_name || 'Клиент',
+    client_phone_masked: call.client_phone_masked,
+    operator_name: call.operator_name || 'Оператор',
+    operator_score: call.operator_score,
+    booking_status: call.booking_status || call.key_facts?.booking_status,
+    is_dispute: isDispute,
+    duration_seconds: call.duration_seconds,
+    model_used: call.model_used,
+    read: false
+  };
+
+  db.notifications.unshift(notif);
+  if (db.notifications.length > 150) {
+    db.notifications = db.notifications.slice(0, 150);
+  }
+  writeDb(db);
+
+  broadcastNotification(notif);
+  appendLog('info', 'system', `Всплывающее оповещение для менеджеров: [${call.call_id}] ${title} (${call.client_name || 'Клиент'})`);
+  return notif;
 }
 
 // Helper function to normalize and fix salon brand name spelling variants
@@ -2118,6 +2200,9 @@ async function importCallRecord(extCall: any): Promise<boolean> {
           const savedCall = updatedDb.calls[callIdx];
           writeDb(updatedDb);
 
+          // Trigger real-time toast notification for managers & admins
+          notifyCallAnalyzed(savedCall);
+
           appendLog('success', 'megafon', `Успешно импортирован звонок ${extCall.call_id} от ${extCall.client_name} (статус: ${savedCall.status})`);
 
           // Trigger integrations only if processing completed cleanly without technical failure
@@ -2643,7 +2728,294 @@ app.get('/api/calls/:id', (req, res) => {
   res.json(callCopy);
 });
 
-// 2.05. EXPORT CALL AUDIT REPORT TO PDF (Для управляющего салоном)
+// 2.01. TAG MANAGEMENT: ADD TAG TO CALL
+app.post('/api/calls/:id/tags', (req, res) => {
+  const db = readDb();
+  const call = db.calls.find((c: any) => c.call_id === req.params.id);
+  if (!call) {
+    return res.status(404).json({ error: 'Звонок не найден' });
+  }
+
+  const { tag } = req.body;
+  if (!tag || typeof tag !== 'string' || !tag.trim()) {
+    return res.status(400).json({ error: 'Необходимо указать наименование тега' });
+  }
+
+  const cleanTag = tag.trim().slice(0, 40);
+  if (!Array.isArray(call.tags)) {
+    call.tags = [];
+  }
+
+  if (!call.tags.includes(cleanTag)) {
+    call.tags.push(cleanTag);
+    writeDb(db);
+    appendLog('info', 'system', `Добавлен тег «${cleanTag}» к звонку ${call.call_id}`);
+  }
+
+  res.json({ success: true, tags: call.tags, call });
+});
+
+// 2.02. TAG MANAGEMENT: REMOVE TAG FROM CALL
+app.delete('/api/calls/:id/tags/:tag', (req, res) => {
+  const db = readDb();
+  const call = db.calls.find((c: any) => c.call_id === req.params.id);
+  if (!call) {
+    return res.status(404).json({ error: 'Звонок не найден' });
+  }
+
+  const rawTag = decodeURIComponent(req.params.tag).trim();
+  if (Array.isArray(call.tags)) {
+    call.tags = call.tags.filter((t: string) => t !== rawTag);
+    writeDb(db);
+    appendLog('info', 'system', `Удален тег «${rawTag}» у звонка ${call.call_id}`);
+  }
+
+  res.json({ success: true, tags: call.tags || [], call });
+});
+
+// 2.03. TAG MANAGEMENT: BULK UPDATE TAGS
+app.put('/api/calls/:id/tags', (req, res) => {
+  const db = readDb();
+  const call = db.calls.find((c: any) => c.call_id === req.params.id);
+  if (!call) {
+    return res.status(404).json({ error: 'Звонок не найден' });
+  }
+
+  const { tags } = req.body;
+  if (!Array.isArray(tags)) {
+    return res.status(400).json({ error: 'Поле tags должно быть массивом строк' });
+  }
+
+  call.tags = Array.from(new Set(tags.map((t: any) => String(t).trim().slice(0, 40)).filter(Boolean)));
+  writeDb(db);
+  appendLog('info', 'system', `Обновлен список тегов для звонка ${call.call_id}: [${call.tags.join(', ')}]`);
+
+  res.json({ success: true, tags: call.tags, call });
+});
+
+// ==============================================================================
+// 2.04. REAL-TIME TOAST NOTIFICATIONS & SSE STREAM (ADMIN & MANAGERS)
+// ==============================================================================
+
+// 1. SSE Stream for Real-time Notifications
+app.get('/api/notifications/stream', (req, res) => {
+  const userRole = getCurrentUserRole(req);
+  if (userRole !== 'admin' && userRole !== 'manager') {
+    return res.status(403).json({ error: 'Уведомления о завершении анализа доступны только администраторам и менеджерам' });
+  }
+
+  // Set SSE Headers
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no'
+  });
+
+  const clientId = `client-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+  sseNotificationClients.set(clientId, { id: clientId, role: userRole, res });
+
+  // Initial handshake and ping
+  res.write(`: connected as ${userRole}\n\n`);
+
+  // Heartbeat ping every 25 seconds to keep connection alive through any reverse proxy
+  const pingInterval = setInterval(() => {
+    try {
+      res.write(': ping\n\n');
+    } catch {
+      clearInterval(pingInterval);
+      sseNotificationClients.delete(clientId);
+    }
+  }, 25000);
+
+  req.on('close', () => {
+    clearInterval(pingInterval);
+    sseNotificationClients.delete(clientId);
+  });
+});
+
+// 2. Get Notifications List (Admin & Manager)
+app.get('/api/notifications', (req, res) => {
+  const userRole = getCurrentUserRole(req);
+  if (userRole !== 'admin' && userRole !== 'manager') {
+    return res.status(403).json({ error: 'Доступ разрешен только администраторам и менеджерам' });
+  }
+  const db = readDb();
+  res.json(db.notifications || []);
+});
+
+// 3. Mark Single Notification as Read
+app.post('/api/notifications/:id/read', (req, res) => {
+  const userRole = getCurrentUserRole(req);
+  if (userRole !== 'admin' && userRole !== 'manager') {
+    return res.status(403).json({ error: 'Доступ разрешен только администраторам и менеджерам' });
+  }
+  const db = readDb();
+  if (Array.isArray(db.notifications)) {
+    const item = db.notifications.find((n: any) => n.id === req.params.id);
+    if (item) {
+      item.read = true;
+      writeDb(db);
+    }
+  }
+  res.json({ success: true });
+});
+
+// 4. Mark All Notifications as Read
+app.post('/api/notifications/read-all', (req, res) => {
+  const userRole = getCurrentUserRole(req);
+  if (userRole !== 'admin' && userRole !== 'manager') {
+    return res.status(403).json({ error: 'Доступ разрешен только администраторам и менеджерам' });
+  }
+  const db = readDb();
+  if (Array.isArray(db.notifications)) {
+    db.notifications.forEach((n: any) => { n.read = true; });
+    writeDb(db);
+  }
+  res.json({ success: true });
+});
+
+// 5. Clear All Notifications
+app.delete('/api/notifications/clear', (req, res) => {
+  const userRole = getCurrentUserRole(req);
+  if (userRole !== 'admin' && userRole !== 'manager') {
+    return res.status(403).json({ error: 'Доступ разрешен только администраторам и менеджерам' });
+  }
+  const db = readDb();
+  db.notifications = [];
+  writeDb(db);
+  res.json({ success: true });
+});
+
+// 6. Test Notification (for Administrators & Managers to verify sound & toast UI)
+app.post('/api/notifications/test', (req, res) => {
+  const userRole = getCurrentUserRole(req);
+  if (userRole !== 'admin' && userRole !== 'manager') {
+    return res.status(403).json({ error: 'Доступ разрешен только администраторам и менеджерам' });
+  }
+  const db = readDb();
+  const sampleCall: CallRecord = db.calls.find((c: any) => c.status === 'completed') || {
+    call_id: `test-call-${Date.now()}`,
+    timestamp: new Date().toISOString(),
+    duration_seconds: 135,
+    model_used: 'GigaChat:Lite',
+    client_name: 'Елена Васильева (тест)',
+    client_phone_masked: '+7 (927) ***-55-44',
+    operator_name: 'Мария (администратор)',
+    status: 'completed',
+    summary: 'Тестовый звонок: клиент подтвердил запись на стрижку и окрашивание на 15:00.',
+    booking_status: 'согласие',
+    operator_score: 9,
+    operator_comment: 'Отличная работа с клиентом, подтверждено время и стоимость услуги.',
+    transcript: 'Тестовая стенограмма...',
+    trigger_phrases: [],
+    key_facts: {
+      is_dispute: false,
+      dispute_reason: null,
+      promises: ['Отправить напоминание в WhatsApp'],
+      tone_client: 'дружелюбный',
+      tone_manager: 'дружелюбный',
+      call_outcome: 'запись',
+      booking_status: 'согласие'
+    },
+    recommendations: ['Поддерживать стандарты вежливого общения']
+  };
+
+  const notification = notifyCallAnalyzed(sampleCall);
+  res.json({ success: true, notification });
+});
+
+// 2.05. INCOMING ATS WEBHOOK (/api/calls/webhook)
+app.post('/api/calls/webhook', async (req, res) => {
+  try {
+    const payload = req.body || {};
+    const db = readDb();
+
+    // Verify token if configured
+    const expectedToken = (db.config.megafon?.token || '').trim();
+    const incomingToken = (req.headers['x-megafon-token'] || req.headers['authorization'] || req.headers['x-api-key'] || req.query.token || payload.token || '').toString().replace(/^Bearer\s+/i, '').trim();
+    const userRole = getCurrentUserRole(req);
+
+    // If request comes from authenticated admin/manager or has valid token, allow it
+    const isRoleAuthorized = userRole === 'admin' || userRole === 'manager';
+    if (!isRoleAuthorized && expectedToken && expectedToken !== 'megafon_ats_auth_token_example_123' && incomingToken !== expectedToken) {
+      appendLog('warning', 'megafon', 'Отклонен входящий вебхук: неверный токен авторизации');
+      return res.status(401).json({ error: 'Неверный токен авторизации вебхука' });
+    }
+
+    const callId = payload.call_id || payload.id || `ats-${Date.now()}`;
+    const clientPhone = payload.phone || payload.client_phone || payload.caller || '';
+    const maskedPhone = maskPhone(clientPhone);
+    const clientName = payload.client_name || `Клиент (${maskedPhone.slice(-4) || 'АТС'})`;
+    const operatorName = payload.operator_name || payload.employee || 'Дежурный администратор';
+    const duration = Number(payload.duration || payload.duration_seconds || 0);
+    const status = payload.status === 'missed' || duration === 0 ? 'missed' : 'completed';
+
+    const newCall: CallRecord = {
+      call_id: callId,
+      timestamp: payload.timestamp || new Date().toISOString(),
+      duration_seconds: duration,
+      model_used: db.config.activeModel || 'GigaChat:Lite',
+      transcript: payload.transcript || (status === 'missed' ? 'Звонок пропущен или сброшен до ответа' : 'Поступил звонок через АТС. Текст стенограммы...'),
+      summary: payload.summary || (status === 'missed' ? 'Пропущенный звонок через АТС' : 'Обращение клиента через телефонию АТС'),
+      client_name: clientName,
+      client_phone_masked: maskedPhone,
+      full_phone: clientPhone,
+      operator_name: operatorName,
+      status: status,
+      is_answered: status !== 'missed',
+      booking_status: payload.booking_status || (status === 'missed' ? 'не применимо' : 'консультация'),
+      operator_score: payload.operator_score !== undefined ? Number(payload.operator_score) : (status === 'missed' ? null : 8),
+      operator_comment: payload.operator_comment || (status === 'missed' ? 'Звонок не принят' : 'Обработан оператором'),
+      trigger_phrases: [],
+      key_facts: {
+        is_dispute: Boolean(payload.is_dispute),
+        dispute_reason: payload.dispute_reason || null,
+        promises: Array.isArray(payload.promises) ? payload.promises : [],
+        tone_client: payload.tone_client || 'нейтральный',
+        tone_manager: payload.tone_manager || 'спокойный',
+        call_outcome: status === 'missed' ? 'перезвон' : (payload.booking_status === 'согласие' ? 'запись' : 'консультация'),
+        booking_status: payload.booking_status || (status === 'missed' ? 'не применимо' : 'консультация'),
+        client_issue: payload.client_issue || 'Входящий вызов АТС'
+      },
+      recommendations: status === 'missed' ? ['Перезвонить клиенту'] : ['Продолжить работу по скрипту'],
+      tags: status === 'missed' ? ['Перезвонить'] : ['АТС']
+    };
+
+    if (payload.transcript && status !== 'missed' && payload.transcript.length > 50) {
+      try {
+        const gModel = (db.config.default_gigachat_model || 'GigaChat:Lite') as GigaChatModel;
+        const analysis = await analyzeWithRetry(payload.transcript, gModel);
+        if (analysis) {
+          newCall.summary = analysis.transcript_summary || newCall.summary;
+          newCall.booking_status = analysis.booking_status || newCall.booking_status;
+          newCall.operator_score = analysis.operator_score !== null ? analysis.operator_score : newCall.operator_score;
+          newCall.operator_comment = analysis.operator_comment || newCall.operator_comment;
+          if (analysis.key_facts) {
+            newCall.key_facts = { ...newCall.key_facts, ...analysis.key_facts };
+          }
+        }
+      } catch (analysisErr: any) {
+        console.warn('[Webhook AI Analysis Warning]', analysisErr.message);
+      }
+    }
+
+    db.calls.unshift(newCall);
+    writeDb(db);
+
+    appendLog('success', 'megafon', `Принят входящий вебхук по звонку ${callId} (${clientName})`);
+
+    // Trigger Toast Notification for Managers & Admins
+    notifyCallAnalyzed(newCall);
+
+    res.json({ success: true, call_id: callId, call: newCall });
+  } catch (err: any) {
+    appendLog('error', 'megafon', `Ошибка обработки вебхука: ${err.message}`);
+    res.status(500).json({ error: 'Ошибка обработки вебхука', details: err.message });
+  }
+});
+
+// 2.06. EXPORT CALL AUDIT REPORT TO PDF (Для управляющего салоном)
 app.get('/api/calls/:id/export-pdf', (req, res) => {
   const db = readDb();
   const userRole = getCurrentUserRole(req);
@@ -2677,8 +3049,8 @@ app.get('/api/calls/:id/export-pdf', (req, res) => {
   };
 
   try {
-    const doc = generateCallAuditPdf(callForReport);
-    const filename = `Otchet_Lick28_${call.call_id}.pdf`;
+    const doc = generateCallAuditPdf(callForReport, userRole);
+    const filename = `Otchet_Lik28_${call.call_id}.pdf`;
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -2688,6 +3060,52 @@ app.get('/api/calls/:id/export-pdf', (req, res) => {
   } catch (error: any) {
     console.error('Ошибка при генерации PDF отчета:', error);
     res.status(500).json({ error: `Ошибка формирования PDF: ${error.message || error}` });
+  }
+});
+
+// 2.06. EXPORT CALL AUDIT REPORT TO CSV (С учетом маскирования 152-ФЗ)
+app.get('/api/calls/:id/export-csv', (req, res) => {
+  const db = readDb();
+  const userRole = getCurrentUserRole(req);
+  const call = db.calls.find((c: any) => c.call_id === req.params.id);
+  if (!call) {
+    return res.status(404).json({ error: 'Звонок не найден' });
+  }
+
+  const rawPhone = call.client_phone || call.full_phone || '';
+  const masked = call.client_phone_masked || maskPhone(rawPhone);
+
+  let bookingStatus = call.booking_status || call.key_facts?.booking_status;
+  if (!bookingStatus) {
+    const outcome = (call.key_facts?.call_outcome || '').toLowerCase();
+    const summary = (call.summary || '').toLowerCase();
+    if (outcome === 'запись' || summary.includes('запись подтверждена') || summary.includes('записан')) {
+      bookingStatus = 'согласие';
+    } else if (outcome === 'отказ' || summary.includes('отказ') || summary.includes('не будет в городе')) {
+      bookingStatus = 'отказ';
+    } else if (outcome === 'автоответчик') {
+      bookingStatus = 'не применимо';
+    } else {
+      bookingStatus = 'консультация';
+    }
+  }
+
+  const callForReport: any = {
+    ...call,
+    booking_status: bookingStatus,
+    client_phone_masked: masked,
+  };
+
+  try {
+    const csvContent = generateCallCsv(callForReport, userRole);
+    const filename = `Otchet_Lik28_${call.call_id}.csv`;
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(csvContent);
+  } catch (error: any) {
+    console.error('Ошибка при генерации CSV отчета:', error);
+    res.status(500).json({ error: `Ошибка формирования CSV: ${error.message || error}` });
   }
 });
 
@@ -2787,6 +3205,7 @@ app.post('/api/calls/analyze', async (req, res) => {
 
     db.calls.unshift(missedCall);
     writeDb(db);
+    notifyCallAnalyzed(missedCall);
     return res.json(missedCall);
   }
 
@@ -2840,6 +3259,9 @@ app.post('/api/calls/analyze', async (req, res) => {
       
       const savedCall = updatedDb.calls[callIdx];
       writeDb(updatedDb);
+
+      // Trigger real-time toast notification for managers & admins
+      notifyCallAnalyzed(savedCall);
 
       // Trigger automatic integrations ONLY on successful analysis
       if (!isFailed && savedCall.status === 'completed') {
@@ -2968,6 +3390,9 @@ async function performCallReanalysis(callId: string): Promise<any> {
       }
       const savedCall = finalDb.calls[finalCallIdx];
       writeDb(finalDb);
+
+      // Trigger real-time toast notification for managers & admins
+      notifyCallAnalyzed(savedCall);
 
       if (!isFailed && savedCall.status === 'completed') {
         // Trigger automatic integrations only upon successful processing
@@ -3342,7 +3767,7 @@ app.post('/api/cleanup/trigger', async (req, res) => {
   appendLog('info', 'cleanup', 'Ручной запуск регламентного удаления устаревших персональных данных по 152-ФЗ...');
   try {
     const result = await runCleanupNow();
-    appendLog('success', 'cleanup', `Очистка завершена: удалено аудиозаписей ${result.audioDeleted}, стенограмм ${result.transcriptsPurged}`);
+    appendLog('success', 'cleanup', `Очистка завершена: удалено аудиозаписей ${result.audioRemoved}, стенограмм ${result.contentRemoved}, логов ${result.logsCleaned}, файлов ${result.tempFilesCleaned}`);
     res.json({
       success: true,
       result
@@ -3426,6 +3851,166 @@ app.get('/api/stats', (req, res) => {
     else if (c.key_facts.tone_manager === 'оборонительный') tone_manager.defensive++;
   });
 
+  // Calculate Hourly Stats (Europe/Samara, UTC+4)
+  const hourlyMap: Record<number, { total: number; booked: number; declined: number; consultation: number; disputes: number; totalScore: number; scoreCount: number; missed: number }> = {};
+  for (let h = 0; h < 24; h++) {
+    hourlyMap[h] = { total: 0, booked: 0, declined: 0, consultation: 0, disputes: 0, totalScore: 0, scoreCount: 0, missed: 0 };
+  }
+
+  // Include all calls (both completed and missed for peak load estimation)
+  const allCallsForHourly: any[] = db.calls || [];
+  allCallsForHourly.forEach((c: any) => {
+    try {
+      const d = new Date(c.timestamp);
+      if (isNaN(d.getTime())) return;
+      const samaraHour = (d.getUTCHours() + 4) % 24;
+      const entry = hourlyMap[samaraHour];
+      if (!entry) return;
+
+      entry.total++;
+      if (c.status === 'missed') {
+        entry.missed++;
+      }
+      const outcome = (c.key_facts?.call_outcome || '').toLowerCase();
+      const booking = (c.booking_status || c.key_facts?.booking_status || '').toLowerCase();
+      if (booking === 'согласие' || outcome === 'запись') {
+        entry.booked++;
+      } else if (booking === 'отказ' || outcome === 'отказ') {
+        entry.declined++;
+      } else {
+        entry.consultation++;
+      }
+      if (c.key_facts?.is_dispute) {
+        entry.disputes++;
+      }
+      if (typeof c.operator_score === 'number' && !isNaN(c.operator_score)) {
+        entry.totalScore += c.operator_score;
+        entry.scoreCount++;
+      }
+    } catch {
+      // ignore date errors
+    }
+  });
+
+  const hourlyStats = Object.keys(hourlyMap).map((hStr) => {
+    const h = parseInt(hStr, 10);
+    const item = hourlyMap[h];
+    return {
+      hour: h,
+      label: `${h < 10 ? '0' : ''}${h}:00`,
+      total: item.total,
+      booked: item.booked,
+      declined: item.declined,
+      consultation: item.consultation,
+      disputes: item.disputes,
+      missed: item.missed,
+      avgScore: item.scoreCount > 0 ? Number((item.totalScore / item.scoreCount).toFixed(1)) : 0,
+    };
+  });
+
+  // Calculate Daily Sentiment & Loyalty Trends (Europe/Samara, UTC+4)
+  const daySentimentMap: Record<string, {
+    dateKey: string;
+    total: number;
+    positive: number;
+    negative: number;
+    neutral: number;
+    disputes: number;
+    totalScore: number;
+    scoreCount: number;
+    dObj: Date;
+  }> = {};
+
+  allCallsForHourly.forEach((c: any) => {
+    try {
+      const d = new Date(c.timestamp);
+      if (isNaN(d.getTime())) return;
+      const samaraDate = new Date(d.getTime() + 4 * 3600 * 1000);
+      const dateKey = samaraDate.toISOString().slice(0, 10);
+
+      if (!daySentimentMap[dateKey]) {
+        daySentimentMap[dateKey] = {
+          dateKey,
+          total: 0,
+          positive: 0,
+          negative: 0,
+          neutral: 0,
+          disputes: 0,
+          totalScore: 0,
+          scoreCount: 0,
+          dObj: samaraDate,
+        };
+      }
+
+      const entry = daySentimentMap[dateKey];
+      entry.total++;
+
+      const tc = (c.key_facts?.tone_client || '').toLowerCase();
+      const score = typeof c.operator_score === 'number' && !isNaN(c.operator_score) ? c.operator_score : null;
+      const isDispute = !!c.key_facts?.is_dispute;
+      if (isDispute) entry.disputes++;
+
+      if (score !== null) {
+        entry.totalScore += score;
+        entry.scoreCount++;
+      }
+
+      const isNegative = isDispute ||
+        ['раздраженный', 'недовольный', 'агрессивный', 'конфликтный', 'грубый'].some(t => tc.includes(t)) ||
+        (score !== null && score > 0 && score <= 4);
+
+      const isPositive = !isNegative && (
+        ['дружелюбный', 'позитивный', 'благодарный', 'радостный', 'довольный'].some(t => tc.includes(t)) ||
+        (score !== null && score >= 8) ||
+        (c.booking_status === 'согласие' || c.key_facts?.call_outcome === 'запись')
+      );
+
+      if (isNegative) {
+        entry.negative++;
+      } else if (isPositive) {
+        entry.positive++;
+      } else {
+        entry.neutral++;
+      }
+    } catch {
+      // ignore date errors
+    }
+  });
+
+  const sortedDays = Object.values(daySentimentMap).sort((a, b) => a.dateKey.localeCompare(b.dateKey));
+  const russianDayNames = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
+  const russianMonthNames = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+
+  const sentimentTrends = sortedDays.map((d) => {
+    const dParts = new Date(d.dateKey + 'T12:00:00Z');
+    const dayOfWeek = russianDayNames[dParts.getUTCDay()];
+    const dayNum = dParts.getUTCDate();
+    const month = russianMonthNames[dParts.getUTCMonth()];
+
+    const posPct = d.total > 0 ? Math.round((d.positive / d.total) * 100) : 0;
+    const negPct = d.total > 0 ? Math.round((d.negative / d.total) * 100) : 0;
+    const neuPct = d.total > 0 ? Math.max(0, 100 - posPct - negPct) : 0;
+    const nsi = posPct - negPct;
+    const avgScore = d.scoreCount > 0 ? Number((d.totalScore / d.scoreCount).toFixed(1)) : null;
+
+    return {
+      dateKey: d.dateKey,
+      label: `${dayOfWeek}, ${dayNum} ${month}`,
+      shortLabel: `${dayNum} ${month}`,
+      dayOfWeek,
+      total: d.total,
+      positive: d.positive,
+      negative: d.negative,
+      neutral: d.neutral,
+      posPct,
+      negPct,
+      neuPct,
+      nsi,
+      avgScore,
+      disputes: d.disputes,
+    };
+  });
+
   const stats: DashboardStats = {
     totalCalls: total,
     disputeRate: Math.round((disputes / total) * 100),
@@ -3434,7 +4019,9 @@ app.get('/api/stats', (req, res) => {
     toneStats: {
       client: tone_client,
       manager: tone_manager
-    }
+    },
+    hourlyStats,
+    sentimentTrends
   };
 
   res.json(stats);

@@ -16,7 +16,8 @@ import { hashPassword, verifyPassword } from '../store/user-store.js';
 import { invalidateGigaChatTokenCache } from '../services/gigachat-auth.js';
 import { invalidateAuthorizedKeyCache, getAuthorizedKeyInfo, getIamToken } from '../services/yandex-auth.js';
 import { setStoreEncryptionKey, isStoreEncryptionKeyConfigured } from '../store/crypto-store.js';
-import { SystemCredentials, GigaChatModel } from '../types.js';
+import { scanTempFiles, cleanTempFiles, runCleanupNow } from '../store/cleanup.js';
+import { SystemCredentials, GigaChatModel, AutoCleanupSettings, LogEntry } from '../types.js';
 
 export const adminRouter = Router();
 
@@ -661,3 +662,112 @@ adminRouter.post('/test/vk', async (req: Request, res: Response) => {
     res.status(400).json({ success: false, error: `Ошибка отправки в VK: ${err.message}` });
   }
 });
+
+/**
+ * GET /api/admin/cleanup-settings
+ * Получение текущих настроек автоочистки логов и временных файлов (152-ФЗ)
+ */
+adminRouter.get('/cleanup-settings', async (req: Request, res: Response) => {
+  try {
+    const store = await readStore();
+    const config: AutoCleanupSettings = store.config.autoCleanup || {
+      enabled: true,
+      logRetentionDays: 30,
+      tempFilesRetentionDays: 30,
+      autoRunDaily: true
+    };
+
+    const retentionDays = config.tempFilesRetentionDays || 30;
+    const tempReport = scanTempFiles(retentionDays);
+
+    const now = Date.now();
+    const logCutoff = now - (config.logRetentionDays || 30) * 86400000;
+    const logsTotal = Array.isArray(store.logs) ? store.logs.length : 0;
+    const logsOlderThanRetention = Array.isArray(store.logs) 
+      ? store.logs.filter((l: LogEntry) => new Date(l.timestamp).getTime() < logCutoff).length 
+      : 0;
+    const accessLogsTotal = Array.isArray(store.access_log) ? store.access_log.length : 0;
+
+    res.json({
+      settings: config,
+      currentStats: {
+        logsTotal,
+        logsOlderThanRetention,
+        accessLogsTotal,
+        tempFilesTotal: tempReport.totalFiles,
+        tempFilesBytes: tempReport.totalBytes,
+        tempFilesOlderThanRetention: tempReport.olderThanDaysFiles,
+        tempBytesOlderThanRetention: tempReport.olderThanDaysBytes,
+        scannedDirs: tempReport.scannedDirs
+      }
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: `Ошибка получения настроек автоочистки: ${err.message}` });
+  }
+});
+
+/**
+ * POST /api/admin/cleanup-settings
+ * Сохранение настроек автоочистки логов и временных файлов
+ */
+adminRouter.post('/cleanup-settings', async (req: Request, res: Response) => {
+  try {
+    const store = await readStore();
+    const body = req.body || {};
+
+    const enabled = body.enabled !== false;
+    const logRetentionDays = Math.max(1, Math.min(365, parseInt(String(body.logRetentionDays || 30), 10) || 30));
+    const tempFilesRetentionDays = Math.max(1, Math.min(365, parseInt(String(body.tempFilesRetentionDays || 30), 10) || 30));
+    const autoRunDaily = body.autoRunDaily !== false;
+
+    store.config.autoCleanup = {
+      ...(store.config.autoCleanup || {}),
+      enabled,
+      logRetentionDays,
+      tempFilesRetentionDays,
+      autoRunDaily
+    };
+
+    await writeStore(store);
+
+    await logAccess(
+      getCurrentUser(req)?.name || 'admin',
+      'write',
+      'Обновлены параметры автоочистки 152-ФЗ (логи и временные файлы)',
+      req.ip || '127.0.0.1'
+    );
+
+    res.json({
+      success: true,
+      message: 'Настройки автоочистки (152-ФЗ) успешно сохранены',
+      settings: store.config.autoCleanup
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: `Ошибка сохранения настроек автоочистки: ${err.message}` });
+  }
+});
+
+/**
+ * POST /api/admin/cleanup/run
+ * Принудительное выполнение очистки логов, временных файлов и данных 152-ФЗ прямо сейчас
+ */
+adminRouter.post('/cleanup/run', async (req: Request, res: Response) => {
+  try {
+    const stats = await runCleanupNow();
+    await logAccess(
+      getCurrentUser(req)?.name || 'admin',
+      'delete',
+      'Запущена регламентная очистка данных 152-ФЗ (логи и файлы)',
+      req.ip || '127.0.0.1'
+    );
+
+    res.json({
+      success: true,
+      message: 'Регламентная очистка данных 152-ФЗ успешно выполнена',
+      stats
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: `Ошибка выполнения очистки: ${err.message}` });
+  }
+});
+

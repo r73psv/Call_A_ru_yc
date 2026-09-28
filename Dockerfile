@@ -16,7 +16,7 @@ RUN apk add --no-cache tzdata ca-certificates
 
 # Copy package manifests and install all dependencies (including devDependencies)
 COPY package*.json ./
-RUN npm install
+RUN npm install --no-audit --no-fund
 
 # Copy application configuration and source code
 COPY tsconfig.json vite.config.ts index.html metadata.json ./
@@ -86,7 +86,7 @@ RUN mkdir -p /app/keys /app/data /app/temp /app/uploads && \
 
 # Copy package manifests and install only production dependencies
 COPY package*.json ./
-RUN npm install --omit=dev && npm cache clean --force
+RUN npm install --omit=dev --no-audit --no-fund && npm cache clean --force
 
 # Copy pre-compiled distribution assets from builder
 COPY --from=builder --chown=node:node /app/dist ./dist

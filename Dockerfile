@@ -84,9 +84,9 @@ RUN mkdir -p /app/keys /app/data /app/temp /app/uploads && \
     chmod 750 /app/data && \
     chmod 770 /app/temp /app/uploads
 
-# Copy package manifests and install only production dependencies
-COPY package*.json ./
-RUN npm install --omit=dev --no-audit --no-fund && npm cache clean --force
+# Copy package manifest and pre-installed dependencies from builder
+COPY package.json ./
+COPY --from=builder --chown=node:node /app/node_modules ./node_modules
 
 # Copy pre-compiled distribution assets from builder
 COPY --from=builder --chown=node:node /app/dist ./dist

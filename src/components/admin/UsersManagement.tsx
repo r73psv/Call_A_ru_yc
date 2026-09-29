@@ -280,6 +280,16 @@ export function UsersManagement({ authToken, currentUserId }: UsersManagementPro
         </div>
       </div>
 
+      {/* Info note about self-service password changes */}
+      <div className="bg-indigo-50/70 border border-indigo-200/80 rounded-xl p-3 flex items-center justify-between gap-3 text-xs text-indigo-900">
+        <div className="flex items-center gap-2">
+          <KeyRound className="w-4 h-4 text-indigo-600 shrink-0" />
+          <span>
+            <strong>Самостоятельная смена пароля:</strong> Каждый пользователь может самостоятельно изменить свой пароль в любой момент через значок ключа в шапке приложения или по ссылке в окне входа.
+          </span>
+        </div>
+      </div>
+
       {/* Users Table */}
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-2xs">
         <div className="overflow-x-auto">

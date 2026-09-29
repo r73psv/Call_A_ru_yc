@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
-import { KeyRound, Lock, Eye, EyeOff, ShieldCheck, CheckCircle2, AlertCircle, X } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { KeyRound, Lock, Eye, EyeOff, ShieldCheck, CheckCircle2, AlertCircle, X, User } from 'lucide-react';
 import { UserRole } from '../types.js';
 
 interface UserPasswordChangeModalProps {
@@ -25,6 +25,7 @@ export function UserPasswordChangeModal({
   currentUser,
   authToken,
 }: UserPasswordChangeModalProps) {
+  const [usernameInput, setUsernameInput] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -37,9 +38,18 @@ export function UserPasswordChangeModal({
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  if (!isOpen || !currentUser) return null;
+  useEffect(() => {
+    if (currentUser?.username) {
+      setUsernameInput(currentUser.username);
+    } else {
+      setUsernameInput('');
+    }
+  }, [currentUser, isOpen]);
+
+  if (!isOpen) return null;
 
   const handleReset = () => {
+    if (!currentUser) setUsernameInput('');
     setCurrentPassword('');
     setNewPassword('');
     setConfirmPassword('');
@@ -52,13 +62,20 @@ export function UserPasswordChangeModal({
     onClose();
   };
 
+  const effectiveUsername = (currentUser?.username || usernameInput).trim();
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setSuccess(null);
 
+    if (!effectiveUsername) {
+      setError('Укажите имя пользователя (логин)');
+      return;
+    }
+
     if (!currentPassword) {
-      setError('Введите текущий пароль');
+      setError('Введите текущий действующий пароль');
       return;
     }
 
@@ -86,13 +103,15 @@ export function UserPasswordChangeModal({
       if (authToken) {
         headers['Authorization'] = `Bearer ${authToken}`;
       }
-      headers['x-user-role'] = currentUser.role;
+      if (currentUser?.role) {
+        headers['x-user-role'] = currentUser.role;
+      }
 
       const res = await fetch('/api/auth/change-password', {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          username: currentUser.username,
+          username: effectiveUsername,
           currentPassword,
           newPassword,
         }),
@@ -103,12 +122,14 @@ export function UserPasswordChangeModal({
         throw new Error(data.error || 'Не удалось изменить пароль');
       }
 
-      setSuccess('Пароль успешно изменен! Запомните новый пароль для последующих входов.');
-      handleReset();
+      setSuccess('Пароль успешно изменен! Используйте новый пароль при следующем входе в систему.');
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
 
       setTimeout(() => {
         handleClose();
-      }, 2000);
+      }, 2500);
     } catch (err: any) {
       setError(err.message || 'Ошибка смены пароля');
     } finally {
@@ -116,13 +137,13 @@ export function UserPasswordChangeModal({
     }
   };
 
-  const getRoleLabel = (role: UserRole) => {
+  const getRoleLabel = (role?: UserRole) => {
     switch (role) {
       case 'admin': return 'Главный Администратор';
       case 'manager': return 'Управляющий';
       case 'operator': return 'Администратор ресепшн';
       case 'viewer': return 'Аудитор / Наблюдатель';
-      default: return role;
+      default: return role || 'Пользователь';
     }
   };
 
@@ -155,17 +176,25 @@ export function UserPasswordChangeModal({
             </div>
             <div>
               <h3 className="text-base font-bold tracking-tight text-white">
-                Смена пароля
+                Смена пароля пользователя
               </h3>
               <p className="text-xs text-slate-300 flex items-center gap-1.5 mt-0.5">
-                <span className="font-semibold text-white">{currentUser.name}</span>
-                <span className="text-slate-400">({currentUser.username})</span>
+                {currentUser ? (
+                  <>
+                    <span className="font-semibold text-white">{currentUser.name}</span>
+                    <span className="text-slate-400">({currentUser.username})</span>
+                  </>
+                ) : (
+                  <span>Самостоятельная смена пароля учетной записи</span>
+                )}
               </p>
             </div>
           </div>
 
           <div className="mt-3 flex items-center justify-between pt-3 border-t border-white/10 text-[11px] text-slate-300">
-            <span>Роль: <strong className="text-indigo-200">{getRoleLabel(currentUser.role)}</strong></span>
+            <span>
+              Роль: <strong className="text-indigo-200">{currentUser ? getRoleLabel(currentUser.role) : 'Определяется по логину'}</strong>
+            </span>
             <span className="flex items-center gap-1 text-emerald-300">
               <ShieldCheck className="w-3 h-3" /> Хэширование PBKDF2 (152-ФЗ)
             </span>
@@ -185,6 +214,41 @@ export function UserPasswordChangeModal({
             <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-start gap-2.5 text-xs text-emerald-800 animate-in fade-in" id="change-password-success-alert">
               <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
               <div>{success}</div>
+            </div>
+          )}
+
+          {/* Username Field (if not already locked to currentUser) */}
+          {!currentUser && (
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Логин учетной записи <span className="text-red-500">*</span>
+              </label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                  <User className="w-4 h-4" />
+                </div>
+                <input
+                  type="text"
+                  value={usernameInput}
+                  onChange={(e) => setUsernameInput(e.target.value)}
+                  required
+                  placeholder="admin, manager, operator, viewer или ваш логин"
+                  className="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-xl text-xs focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors"
+                  id="change-password-username-input"
+                />
+              </div>
+              <div className="flex gap-1.5 mt-1.5">
+                {['admin', 'manager', 'operator', 'viewer'].map((u) => (
+                  <button
+                    key={u}
+                    type="button"
+                    onClick={() => setUsernameInput(u)}
+                    className="px-2 py-0.5 text-[10px] bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-md transition-colors"
+                  >
+                    {u}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 
@@ -303,7 +367,7 @@ export function UserPasswordChangeModal({
             </button>
             <button
               type="submit"
-              disabled={loading || !currentPassword || !newPassword || !confirmPassword || newPassword !== confirmPassword || newPassword.length < 6}
+              disabled={loading || !effectiveUsername || !currentPassword || !newPassword || !confirmPassword || newPassword !== confirmPassword || newPassword.length < 6}
               className="px-5 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl shadow-xs transition-colors flex items-center gap-1.5"
               id="change-password-submit-btn"
             >

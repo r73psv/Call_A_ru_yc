@@ -723,6 +723,7 @@ export default function App() {
       <LoginModal
         isOpen={isLoginModalOpen}
         onLoginSuccess={handleLoginSuccess}
+        onOpenChangePassword={() => setIsChangePasswordModalOpen(true)}
       />
 
       {/* User Self-Service Password Change Modal */}

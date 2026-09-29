@@ -10,9 +10,10 @@ import { UserRole } from '../types.js';
 interface LoginModalProps {
   onLoginSuccess: (user: { id: string; username: string; name: string; role: UserRole }, token: string) => void;
   isOpen: boolean;
+  onOpenChangePassword?: () => void;
 }
 
-export function LoginModal({ onLoginSuccess, isOpen }: LoginModalProps) {
+export function LoginModal({ onLoginSuccess, isOpen, onOpenChangePassword }: LoginModalProps) {
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('admin123');
   const [loading, setLoading] = useState(false);
@@ -116,6 +117,19 @@ export function LoginModal({ onLoginSuccess, isOpen }: LoginModalProps) {
                 id="login-password-input"
               />
             </div>
+            {onOpenChangePassword && (
+              <div className="flex items-center justify-end mt-1.5">
+                <button
+                  type="button"
+                  onClick={onOpenChangePassword}
+                  className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-800 hover:underline flex items-center gap-1"
+                  id="login-modal-change-password-link"
+                >
+                  <KeyRound className="w-3 h-3" />
+                  Сменить свой пароль
+                </button>
+              </div>
+            )}
           </div>
 
           <button

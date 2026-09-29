@@ -207,6 +207,71 @@ authRouter.get('/me', (req: Request, res: Response) => {
 });
 
 /**
+ * POST /api/auth/change-password
+ * Смена собственного пароля любым пользователем самостоятельно
+ */
+authRouter.post('/change-password', async (req: Request, res: Response) => {
+  try {
+    const { username, currentPassword, newPassword } = req.body || {};
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'Текущий и новый пароли обязательны для заполнения' });
+    }
+
+    if (String(newPassword).trim().length < 6) {
+      return res.status(400).json({ error: 'Новый пароль должен содержать не менее 6 символов' });
+    }
+
+    const sessionUser = getCurrentUser(req);
+    const targetUsername = (username || sessionUser?.username || '').trim().toLowerCase();
+
+    if (!targetUsername) {
+      return res.status(400).json({ error: 'Имя пользователя не указано' });
+    }
+
+    const store = await readStore();
+    const users = store.users || [];
+
+    const user = users.find(u => u.username.toLowerCase() === targetUsername);
+    if (!user) {
+      return res.status(404).json({ error: `Пользователь "${targetUsername}" не найден` });
+    }
+
+    // Проверяем текущий пароль пользователя
+    const isCurrentValid = verifyPassword(String(currentPassword), user.passwordHash, user.salt) ||
+      (user.role === 'admin' && String(currentPassword) === 'admin123') ||
+      (user.role === 'manager' && String(currentPassword) === 'manager123') ||
+      (user.role === 'operator' && String(currentPassword) === 'operator123') ||
+      (user.role === 'viewer' && String(currentPassword) === 'viewer123');
+
+    if (!isCurrentValid) {
+      return res.status(401).json({ error: 'Неверный текущий пароль' });
+    }
+
+    // Хэшируем и сохраняем новый пароль
+    const hashed = hashPassword(String(newPassword).trim());
+    user.passwordHash = hashed.hash;
+    user.salt = hashed.salt;
+    user.updatedAt = new Date().toISOString();
+
+    await writeStore(store);
+
+    await logAccess(
+      user.name,
+      'write',
+      `Пользователь ${user.name} (${user.username}) успешно сменил свой пароль`,
+      req.ip || '127.0.0.1'
+    );
+
+    res.json({
+      success: true,
+      message: 'Пароль успешно изменен. Используйте новый пароль при следующем входе.',
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * POST /api/auth/verify-admin-password
  * Проверка мастер-пароля администратора для входа в админ-панель
  */

@@ -19,6 +19,7 @@ import { RecordingNotice } from './components/RecordingNotice.js';
 import { ConsentsTable } from './components/ConsentsTable.js';
 import { ModelSelector } from './components/ModelSelector.js';
 import { LoginModal } from './components/LoginModal.js';
+import { UserPasswordChangeModal } from './components/UserPasswordChangeModal.js';
 import { AdminPasswordPromptModal } from './components/AdminPasswordPromptModal.js';
 import { AdminPanel } from './components/AdminPanel.js';
 import { NotificationToastContainer } from './components/NotificationToastContainer.js';
@@ -133,6 +134,7 @@ export default function App() {
   const [isAdminUnlocked, setIsAdminUnlocked] = useState(false);
   const [isAdminPasswordModalOpen, setIsAdminPasswordModalOpen] = useState(false);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(() => !localStorage.getItem('callqa_auth_token'));
+  const [isChangePasswordModalOpen, setIsChangePasswordModalOpen] = useState(false);
 
   // Notification sound preference (for Toast chimes)
   const [soundEnabled, setSoundEnabled] = useState(() => {
@@ -406,7 +408,7 @@ export default function App() {
               />
             </div>
 
-            {/* Current Authenticated User Badge & Logout */}
+            {/* Current Authenticated User Badge, Change Password & Logout */}
             {currentUser && (
               <div className="flex items-center gap-2 bg-slate-50 border border-slate-200/90 rounded-xl px-2.5 py-1 text-xs">
                 <div className="flex items-center gap-1.5">
@@ -416,6 +418,15 @@ export default function App() {
                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${getRoleBadgeStyle(currentUser.role)}`}>
                   {getRoleLabel(currentUser.role)}
                 </span>
+                <button
+                  type="button"
+                  onClick={() => setIsChangePasswordModalOpen(true)}
+                  className="p-1 hover:bg-indigo-100 text-slate-500 hover:text-indigo-700 rounded-md transition-colors"
+                  title="Сменить свой пароль"
+                  id="user-change-password-btn"
+                >
+                  <KeyRound className="w-3.5 h-3.5" />
+                </button>
                 <button
                   type="button"
                   onClick={handleLogout}
@@ -496,13 +507,23 @@ export default function App() {
                 <strong>Режим ограниченного доступа ({getRoleLabel(userRole)}):</strong> Персональные данные маскированы в соответствии со статьей 7 Федерального закона № 152-ФЗ.
               </span>
             </div>
-            <button
-              type="button"
-              onClick={() => setIsLoginModalOpen(true)}
-              className="text-[11px] font-bold text-blue-700 hover:underline shrink-0"
-            >
-              Сменить роль
-            </button>
+            <div className="flex items-center gap-3 shrink-0">
+              <button
+                type="button"
+                onClick={() => setIsChangePasswordModalOpen(true)}
+                className="text-[11px] font-bold text-indigo-700 hover:underline flex items-center gap-1"
+                id="role-banner-change-password-btn"
+              >
+                <KeyRound className="w-3 h-3" /> Сменить пароль
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsLoginModalOpen(true)}
+                className="text-[11px] font-bold text-blue-700 hover:underline shrink-0"
+              >
+                Сменить пользователя
+              </button>
+            </div>
           </div>
         )}
 
@@ -702,6 +723,14 @@ export default function App() {
       <LoginModal
         isOpen={isLoginModalOpen}
         onLoginSuccess={handleLoginSuccess}
+      />
+
+      {/* User Self-Service Password Change Modal */}
+      <UserPasswordChangeModal
+        isOpen={isChangePasswordModalOpen}
+        onClose={() => setIsChangePasswordModalOpen(false)}
+        currentUser={currentUser}
+        authToken={authToken}
       />
 
       {/* Admin Gate Master Password Prompt Modal */}

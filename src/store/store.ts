@@ -4,7 +4,7 @@
  */
 
 import * as fs from 'fs/promises';
-import { existsSync, mkdirSync, readFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, copyFileSync, writeFileSync } from 'fs';
 import path from 'path';
 import { encrypt, decrypt } from './crypto-store.js';
 import { CallRecord, LogEntry, SystemConfig, AccessLogEntry, User, SystemNotification } from '../types.js';
@@ -23,31 +23,42 @@ export interface AppDatabase {
   config: SystemConfig;
 }
 
-const DEFAULT_CONFIG: SystemConfig = {
-  activeModel: 'GigaChat:Lite',
-  default_gigachat_model: 'GigaChat:Lite',
-  megafon: {
-    token: '',
-    webhookUrl: '/api/calls/webhook',
-    autoImport: false,
-    active: false,
-    pollingEnabled: false,
-    pollingIntervalMinutes: 5,
-    lastPollingTime: new Date().toISOString(),
-  },
-  vk: {
-    token: '',
-    chatId: '',
-    enabled: false,
-    template: `🔔 *Анализ звонка #{call_id}*\n📅 *Дата:* {call_date_time}\n👤 *Клиент:* {client_name}\n📞 *Оценка оператора:* {operator_score}/10\n💬 *Резюме:* {summary}\n⚠️ *Конфликт:* {is_dispute_text}\n💡 *Рекомендации:* {recommendations}`,
-  },
-  yclients: {
-    userToken: '',
-    partnerToken: '',
-    salonId: '',
-    enabled: false,
-  },
-};
+export function getDefaultConfig(): SystemConfig {
+  const megafonToken = (process.env.MEGAFON_TOKEN || '').trim();
+  const vkToken = (process.env.VK_TOKEN || '').trim();
+  const vkChatId = (process.env.VK_CHAT_ID || '').trim();
+  const yclientsUserToken = (process.env.YCLIENTS_USER_TOKEN || '').trim();
+  const yclientsPartnerToken = (process.env.YCLIENTS_PARTNER_TOKEN || '').trim();
+  const yclientsSalonId = (process.env.YCLIENTS_SALON_ID || '').trim();
+
+  return {
+    activeModel: (process.env.GIGACHAT_MODEL as any) || 'GigaChat:Lite',
+    default_gigachat_model: (process.env.GIGACHAT_MODEL as any) || 'GigaChat:Lite',
+    megafon: {
+      token: megafonToken,
+      webhookUrl: '/api/calls/webhook',
+      autoImport: Boolean(megafonToken),
+      active: Boolean(megafonToken),
+      pollingEnabled: Boolean(megafonToken),
+      pollingIntervalMinutes: 5,
+      lastPollingTime: new Date().toISOString(),
+    },
+    vk: {
+      token: vkToken,
+      chatId: vkChatId,
+      enabled: Boolean(vkToken && vkChatId),
+      template: `🔔 *Анализ звонка #{call_id}*\n📅 *Дата:* {call_date_time}\n👤 *Клиент:* {client_name}\n📞 *Оценка оператора:* {operator_score}/10\n💬 *Резюме:* {summary}\n⚠️ *Конфликт:* {is_dispute_text}\n💡 *Рекомендации:* {recommendations}`,
+    },
+    yclients: {
+      userToken: yclientsUserToken,
+      partnerToken: yclientsPartnerToken,
+      salonId: yclientsSalonId,
+      enabled: Boolean(yclientsUserToken && yclientsSalonId),
+    },
+  };
+}
+
+export const DEFAULT_CONFIG: SystemConfig = getDefaultConfig();
 
 export const SEED_CALLS: CallRecord[] = [
   {
@@ -150,11 +161,48 @@ export function readStoreSync(): AppDatabase {
         if (!Array.isArray(parsed.notifications)) {
           parsed.notifications = [];
         }
+        if (process.env.MEGAFON_TOKEN && (!parsed.config?.megafon?.token || parsed.config.megafon.token === '')) {
+          if (!parsed.config) parsed.config = getDefaultConfig();
+          if (!parsed.config.megafon) parsed.config.megafon = getDefaultConfig().megafon;
+          parsed.config.megafon.token = process.env.MEGAFON_TOKEN.trim();
+          parsed.config.megafon.active = true;
+        }
         memCache = parsed;
+        return memCache;
+      } else if (payload && Array.isArray(payload.calls)) {
+        // Raw JSON accidentally stored as .enc
+        if (!payload.users || payload.users.length === 0) {
+          payload.users = getInitialUsers();
+        }
+        memCache = payload;
         return memCache;
       }
     } catch (e: any) {
       console.warn('[Store] Ошибка синхронного дешифрования data-store.enc:', e.message);
+      // Backup corrupted file to avoid data loss
+      try {
+        const bak = `${DATA_PATH_ENC}.corrupted.${Date.now()}`;
+        copyFileSync(DATA_PATH_ENC, bak);
+        console.warn(`[Store] Нераспознанный файл сохранен как резервная копия: ${bak}`);
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  // Check backup mirror
+  const backupMirror = path.join(dir, 'data-store.backup.json');
+  if (existsSync(backupMirror)) {
+    try {
+      const raw = readFileSync(backupMirror, 'utf-8');
+      const parsed: AppDatabase = JSON.parse(raw);
+      if (parsed && (Array.isArray(parsed.calls) || Array.isArray(parsed.users))) {
+        console.log('[Store] Восстановлена база данных из локального backup mirror (data-store.backup.json)');
+        memCache = parsed;
+        return memCache;
+      }
+    } catch {
+      // ignore
     }
   }
 
@@ -216,11 +264,39 @@ export async function readStore(): Promise<AppDatabase> {
         if (!parsed.users || parsed.users.length === 0) {
           parsed.users = getInitialUsers();
         }
+        if (process.env.MEGAFON_TOKEN && (!parsed.config?.megafon?.token || parsed.config.megafon.token === '')) {
+          if (!parsed.config) parsed.config = getDefaultConfig();
+          if (!parsed.config.megafon) parsed.config.megafon = getDefaultConfig().megafon;
+          parsed.config.megafon.token = process.env.MEGAFON_TOKEN.trim();
+          parsed.config.megafon.active = true;
+        }
         memCache = parsed;
+        return memCache;
+      } else if (payload && Array.isArray(payload.calls)) {
+        if (!payload.users || payload.users.length === 0) {
+          payload.users = getInitialUsers();
+        }
+        memCache = payload;
         return memCache;
       }
     } catch (e: any) {
       console.warn('[Store] Ошибка дешифрования data-store.enc:', e.message);
+    }
+  }
+
+  // Backup mirror check
+  const backupMirror = path.join(dir, 'data-store.backup.json');
+  if (existsSync(backupMirror)) {
+    try {
+      const raw = readFileSync(backupMirror, 'utf-8');
+      const parsed: AppDatabase = JSON.parse(raw);
+      if (parsed && (Array.isArray(parsed.calls) || Array.isArray(parsed.users))) {
+        console.log('[Store] Асинхронно восстановлена база данных из backup mirror');
+        memCache = parsed;
+        return memCache;
+      }
+    } catch {
+      // ignore
     }
   }
 
@@ -284,4 +360,12 @@ export async function writeStore(data: AppDatabase): Promise<void> {
   const jsonStr = JSON.stringify(data, null, 2);
   const payload = encrypt(jsonStr);
   await fs.writeFile(DATA_PATH_ENC, JSON.stringify(payload, null, 2), 'utf-8');
+
+  // Also write local backup mirror for fail-safe persistence
+  try {
+    const backupMirror = path.join(dir, 'data-store.backup.json');
+    await fs.writeFile(backupMirror, jsonStr, 'utf-8');
+  } catch (err: any) {
+    console.warn('[Store] Предупреждение: не удалось обновить backup mirror:', err.message);
+  }
 }

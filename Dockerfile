@@ -55,6 +55,7 @@ ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOST=0.0.0.0
 ENV TZ=Europe/Moscow
+ENV ADMIN_PASSWORD=admin123
 ENV DATA_PATH=/app/data/data-store.json
 ENV DATA_PATH_ENC=/app/data/data-store.enc
 ENV CONSENT_PATH=/app/data/consents.enc

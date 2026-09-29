@@ -61,6 +61,7 @@ function getFullDataForSync() {
     calls: db.calls || [],
     logs: db.logs || [],
     config: db.config || {},
+    users: db.users || [],
     consents: consentStore.consents || [],
     access_log: db.access_log || []
   };
@@ -2334,6 +2335,7 @@ async function performS3Hydration(): Promise<boolean> {
       if (Array.isArray(data.calls)) db.calls = data.calls;
       if (Array.isArray(data.logs)) db.logs = data.logs;
       if (data.config) db.config = { ...db.config, ...data.config };
+      if (Array.isArray(data.users) && data.users.length > 0) db.users = data.users;
       if (Array.isArray(data.access_log)) db.access_log = data.access_log;
       await writeStore(db);
 

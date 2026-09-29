@@ -33,8 +33,10 @@ export function verifyPassword(password: string, hash: string, salt: string): bo
  * Возвращает начальных пользователей системы с надежными хэшами паролей
  */
 export function getInitialUsers(): User[] {
-  const adminH = hashPassword('admin123');
-  const managerH = hashPassword('manager123');
+  const adminPwd = process.env.ADMIN_INITIAL_PASSWORD || process.env.ADMIN_PASSWORD || 'admin123';
+  const managerPwd = process.env.MANAGER_INITIAL_PASSWORD || process.env.MANAGER_PASSWORD || 'manager123';
+  const adminH = hashPassword(adminPwd);
+  const managerH = hashPassword(managerPwd);
   const operatorH = hashPassword('operator123');
   const viewerH = hashPassword('viewer123');
 

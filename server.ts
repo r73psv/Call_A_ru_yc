@@ -528,15 +528,6 @@ function extractAndParseLLMJson(rawText: string, transcriptInput: string, module
   return getFallbackAnalysis(transcriptInput, `ИИ вернул неструктурированный текст вместо JSON: ${rawText.substring(0, 150)}`);
 }
 
-// RouterAI has been deprecated in favor of GigaChat
-async function analyzeCallWithRouterAI(
-  transcriptInput: string,
-  _audioBase64?: { data: string; mimeType: string },
-  _config?: any
-): Promise<Partial<CallRecord>> {
-  return getFallbackAnalysis(transcriptInput, 'RouterAI отключен');
-}
-
 // В приложении используются исключительно российские модели (Сбер GigaChat, Yandex Cloud)
 
 // Helper to check if a call record failed due to technical/limitation error and needs reanalysis

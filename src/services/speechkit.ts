@@ -46,17 +46,35 @@ export function detectAudioFormat(buffer: Buffer): 'mp3' | 'oggopus' | 'lpcm' {
 }
 
 /**
- * Сжатие аудиозаписи с помощью ffmpeg в моно 16kHz 24kbps MP3
- * (уменьшает объем файла в 3-5 раз, сохраняя максимальную разборчивость речи для SpeechKit)
+ * Определение длительности аудиофайла в секундах через ffprobe
  */
-function compressAudioToMonoMp3(buffer: Buffer): Buffer | null {
+export function getAudioDuration(buffer: Buffer): number {
   try {
     const tempDir = path.join(process.cwd(), 'temp');
     if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
-    const inPath = path.join(tempDir, `comp-in-${Date.now()}-${Math.random().toString(36).slice(2)}.mp3`);
-    const outPath = path.join(tempDir, `comp-out-${Date.now()}-${Math.random().toString(36).slice(2)}.mp3`);
+    const inPath = path.join(tempDir, `dur-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`);
     fs.writeFileSync(inPath, buffer);
-    execSync(`ffmpeg -y -i "${inPath}" -vn -ac 1 -ar 16000 -b:a 24k "${outPath}" 2>/dev/null`, { timeout: 30000 });
+    const out = execSync(`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${inPath}" 2>/dev/null`, { timeout: 10000 });
+    try { fs.unlinkSync(inPath); } catch {}
+    const duration = parseFloat(out.toString().trim());
+    return isNaN(duration) ? 0 : duration;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Преобразование аудиозаписи в компактный моно OGG Opus 16kHz 24kbps.
+ * Формат OGG Opus является нативным и наиболее стабильным для синхронного API Yandex SpeechKit.
+ */
+export function convertToOggOpus(buffer: Buffer): Buffer | null {
+  try {
+    const tempDir = path.join(process.cwd(), 'temp');
+    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+    const inPath = path.join(tempDir, `cv-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`);
+    const outPath = path.join(tempDir, `cv-${Date.now()}-${Math.random().toString(36).slice(2)}.ogg`);
+    fs.writeFileSync(inPath, buffer);
+    execSync(`ffmpeg -y -i "${inPath}" -vn -c:a libopus -b:a 24k -ar 16000 -ac 1 "${outPath}" 2>/dev/null`, { timeout: 30000 });
     if (fs.existsSync(outPath)) {
       const result = fs.readFileSync(outPath);
       try { fs.unlinkSync(inPath); } catch {}
@@ -65,30 +83,30 @@ function compressAudioToMonoMp3(buffer: Buffer): Buffer | null {
     }
     try { fs.unlinkSync(inPath); } catch {}
   } catch (err: any) {
-    console.warn('[SpeechKit] Ошибка ffmpeg сжатия аудио:', err.message);
+    console.warn('[SpeechKit] Ошибка ffmpeg конвертации в oggopus:', err.message);
   }
   return null;
 }
 
 /**
- * Разбиение аудиозаписи на 25-секундные сегменты с помощью ffmpeg
- * Позволяет распознавать разговоры любой длительности без настройки Object Storage
+ * Разбиение аудиозаписи на 24-секундные сегменты в формате Ogg Opus.
+ * Синхронный метод Yandex SpeechKit имеет строгое ограничение (длительность аудио строго менее 30 секунд).
  */
-function splitAudioIntoChunks(buffer: Buffer, chunkSeconds: number = 25): Buffer[] {
+export function splitAudioIntoOpusChunks(buffer: Buffer, chunkSeconds: number = 24): Buffer[] {
   const chunks: Buffer[] = [];
   try {
     const tempDir = path.join(process.cwd(), 'temp', `chunks-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     fs.mkdirSync(tempDir, { recursive: true });
-    const inPath = path.join(tempDir, 'source.mp3');
+    const inPath = path.join(tempDir, 'source.tmp');
     fs.writeFileSync(inPath, buffer);
-    execSync(`ffmpeg -y -i "${inPath}" -vn -ac 1 -ar 16000 -b:a 24k -f segment -segment_time ${chunkSeconds} "${path.join(tempDir, 'chunk_%03d.mp3')}" 2>/dev/null`, { timeout: 60000 });
-    const files = fs.readdirSync(tempDir).filter(f => f.startsWith('chunk_') && f.endsWith('.mp3')).sort();
+    execSync(`ffmpeg -y -i "${inPath}" -vn -c:a libopus -b:a 24k -ar 16000 -ac 1 -f segment -segment_time ${chunkSeconds} "${path.join(tempDir, 'chunk_%03d.ogg')}" 2>/dev/null`, { timeout: 60000 });
+    const files = fs.readdirSync(tempDir).filter(f => f.startsWith('chunk_') && f.endsWith('.ogg')).sort();
     for (const f of files) {
       chunks.push(fs.readFileSync(path.join(tempDir, f)));
     }
     try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
   } catch (err: any) {
-    console.warn('[SpeechKit] Ошибка ffmpeg разбиения аудио:', err.message);
+    console.warn('[SpeechKit] Ошибка ffmpeg разбиения аудио на Opus-сегменты:', err.message);
   }
   return chunks;
 }
@@ -255,9 +273,11 @@ export async function transcribeWithSpeechKit(audioBuffer: Buffer): Promise<stri
 
   const authHeader = await getYandexAuthHeader();
   const bucket = getYandexStorageBucket();
+  const duration = getAudioDuration(audioBuffer);
+  console.log(`[SpeechKit] Подготовка аудиозаписи (${Math.round(audioBuffer.length / 1024)} КБ, ${duration.toFixed(1)} сек.)`);
 
-  // 1. Если настроен Yandex Object Storage, используем двухканальное асинхронное распознавание
-  if (bucket) {
+  // 1. Если настроен Yandex Object Storage и запись длиннее 25 секунд, используем асинхронное двухканальное распознавание
+  if (bucket && duration >= 25) {
     try {
       const objectKey = `audio/${Date.now()}-${Math.random().toString(36).slice(2)}.mp3`;
       await uploadToObjectStorage(audioBuffer, objectKey);
@@ -272,45 +292,35 @@ export async function transcribeWithSpeechKit(audioBuffer: Buffer): Promise<stri
       }
     } catch (asyncErr: any) {
       console.warn('[SpeechKit] Ошибка асинхронного распознавания через Object Storage:', asyncErr.message);
-      console.log('[SpeechKit] Переключение на прямое синхронное распознавание...');
+      console.log('[SpeechKit] Переключение на синхронное распознавание...');
     }
   }
 
-  // 2. Прямое синхронное распознавание для файлов до 1 МБ
-  if (audioBuffer.length < 1000 * 1024) {
+  // 2. Если запись короче 28 секунд (лимит синхронного SpeechKit v1 — строго менее 30 секунд):
+  // Конвертируем в нативный OGG Opus и распознаем напрямую
+  if (duration > 0 && duration < 28) {
     try {
-      const result = await transcribeSynchronous(audioBuffer, authHeader);
-      if (result && result.trim()) {
-        return refineTranscriptRoles(result.trim());
+      const oggBuf = convertToOggOpus(audioBuffer);
+      if (oggBuf) {
+        const result = await transcribeSynchronous(oggBuf, authHeader, 'oggopus');
+        if (result && result.trim()) {
+          return refineTranscriptRoles(result.trim());
+        }
       }
     } catch (syncErr: any) {
-      console.warn('[SpeechKit] Синхронное распознавание исходного файла завершилось с ошибкой:', syncErr.message);
+      console.warn('[SpeechKit] Прямое распознавание OGG Opus завершилось с ошибкой:', syncErr.message);
     }
   }
 
-  // 3. Если Object Storage не настроен или файл > 1 МБ: сжатие через ffmpeg в моно 16kHz 24kbps
-  console.log(`[SpeechKit] Аудиофайл (${Math.round(audioBuffer.length / 1024)} КБ) превышает лимит или требует нормализации. Сжатие ffmpeg...`);
-  const compressed = compressAudioToMonoMp3(audioBuffer);
-  if (compressed && compressed.length < 1000 * 1024) {
-    try {
-      console.log(`[SpeechKit] Сжато до ${Math.round(compressed.length / 1024)} КБ. Запуск синхронного распознавания...`);
-      const result = await transcribeSynchronous(compressed, authHeader);
-      if (result && result.trim()) {
-        return refineTranscriptRoles(result.trim());
-      }
-    } catch (compErr: any) {
-      console.warn('[SpeechKit] Ошибка распознавания сжатого аудио:', compErr.message);
-    }
-  }
-
-  // 4. Для длинных разговоров: разделение ffmpeg на 25-секундные сегменты
-  console.log('[SpeechKit] Разделение длинной записи на 25-секундные сегменты для пошагового синхронного распознавания...');
-  const chunks = splitAudioIntoChunks(compressed || audioBuffer, 25);
+  // 3. Для длинных разговоров (или если прямое распознавание не сработало):
+  // Разделение на 24-секундные Opus-сегменты (гарантирует отсутствие ошибки 400 "audio duration should be less than 30s")
+  console.log(`[SpeechKit] Разделение аудио (${duration.toFixed(1)} сек.) на 24-секундные Opus-сегменты для пошагового распознавания...`);
+  const chunks = splitAudioIntoOpusChunks(audioBuffer, 24);
   if (chunks.length > 0) {
     const chunkTexts: string[] = [];
     for (let i = 0; i < chunks.length; i++) {
       try {
-        const text = await transcribeSynchronous(chunks[i], authHeader);
+        const text = await transcribeSynchronous(chunks[i], authHeader, 'oggopus');
         if (text && text.trim()) {
           chunkTexts.push(text.trim());
         }
@@ -333,9 +343,8 @@ async function requestAndPollLongRunning(
   authHeader: string
 ): Promise<string> {
   const folderId = getYandexFolderId();
-  const url = folderId
-    ? `https://transcribe.api.cloud.yandex.net/speech/stt/v2/longRunningRecognize?folderId=${encodeURIComponent(folderId)}`
-    : 'https://transcribe.api.cloud.yandex.net/speech/stt/v2/longRunningRecognize';
+  // Важно: в API v2 параметр folderId передается внутри JSON тела config.folderId, а не в query string!
+  const url = 'https://transcribe.api.cloud.yandex.net/speech/stt/v2/longRunningRecognize';
 
   console.log(`[SpeechKit] Отправка запроса на асинхронное распознавание: ${audioUri}`);
 
@@ -398,10 +407,10 @@ async function requestAndPollLongRunning(
 
 async function transcribeSynchronous(
   audioBuffer: Buffer,
-  authHeader: string
+  authHeader: string,
+  format: 'oggopus' | 'lpcm' = 'oggopus'
 ): Promise<string> {
   const folderId = getYandexFolderId();
-  const format = detectAudioFormat(audioBuffer);
   const query = new URLSearchParams({
     lang: 'ru-RU',
     topic: 'general',

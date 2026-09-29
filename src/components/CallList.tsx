@@ -519,7 +519,6 @@ export function CallList({ calls, selectedCallId, onSelectCall, onClearDemoCalls
               <option value="GigaChat:Pro">GigaChat:Pro</option>
               <option value="GigaChat:Max">GigaChat:Max</option>
               <option value="GigaChat:Ultra">GigaChat:Ultra</option>
-              <option value="routerai">RouterAI</option>
             </select>
           </div>
 

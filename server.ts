@@ -2728,6 +2728,47 @@ app.get('/api/calls/:id', (req, res) => {
   res.json(callCopy);
 });
 
+// 2.001. DELETE SINGLE CALL
+app.delete('/api/calls/:id', (req, res) => {
+  const userRole = getCurrentUserRole(req);
+  if (userRole !== 'admin' && userRole !== 'manager') {
+    return res.status(403).json({ error: 'Удаление записей звонков разрешено только администраторам и управляющим' });
+  }
+
+  const db = readDb();
+  const initialLength = db.calls.length;
+  db.calls = db.calls.filter((c: any) => c.call_id !== req.params.id);
+
+  if (db.calls.length === initialLength) {
+    return res.status(404).json({ error: 'Звонок не найден' });
+  }
+
+  if (Array.isArray(db.notifications)) {
+    db.notifications = db.notifications.filter((n: any) => n.call_id !== req.params.id);
+  }
+
+  writeDb(db);
+  appendLog('info', 'system', `Удалена запись звонка ${req.params.id} пользователем с ролью ${userRole}`);
+  res.json({ success: true, call_id: req.params.id });
+});
+
+// 2.002. CLEAR ALL DEMO CALLS
+app.post('/api/calls/clear-demo', (req, res) => {
+  const userRole = getCurrentUserRole(req);
+  if (userRole !== 'admin' && userRole !== 'manager') {
+    return res.status(403).json({ error: 'Очистка демо-звонков разрешена только администраторам и управляющим' });
+  }
+
+  const db = readDb();
+  const initialLength = db.calls.length;
+  db.calls = db.calls.filter((c: any) => !c.is_demo && c.call_id !== 'megafon-call-89101' && c.call_id !== 'megafon-call-89102');
+  const removedCount = initialLength - db.calls.length;
+
+  writeDb(db);
+  appendLog('info', 'system', `Очищены демонстрационные звонки (${removedCount} шт.)`);
+  res.json({ success: true, removedCount });
+});
+
 // 2.01. TAG MANAGEMENT: ADD TAG TO CALL
 app.post('/api/calls/:id/tags', (req, res) => {
   const db = readDb();

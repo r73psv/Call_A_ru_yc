@@ -9,7 +9,7 @@ import {
   ThumbsUp, Volume2, MessageSquare, 
   MessageCircle, Database, Download, ExternalLink, Zap,
   ShieldCheck, Lock, Clock, Mic, FileText, FileSpreadsheet, Smartphone, HeartHandshake,
-  CheckCircle2, XCircle, HelpCircle, Tag, Tags, Plus, X, Bookmark
+  CheckCircle2, XCircle, HelpCircle, Tag, Tags, Plus, X, Bookmark, Trash2
 } from 'lucide-react';
 import { CallRecord } from '../types.js';
 import { ReanalyzeButton } from './ReanalyzeButton.js';
@@ -21,6 +21,7 @@ interface CallDetailsProps {
   onSendYclients: (id: string) => Promise<boolean>;
   onReanalyze?: (id: string) => Promise<boolean>;
   onCallUpdated?: (updated: CallRecord) => void;
+  onDeleteCall?: (id: string) => Promise<void>;
   userRole?: string;
 }
 
@@ -65,6 +66,7 @@ export function CallDetails({
   onSendYclients, 
   onReanalyze,
   onCallUpdated,
+  onDeleteCall,
   userRole = 'admin',
 }: CallDetailsProps) {
   const [sendingVk, setSendingVk] = useState(false);
@@ -487,6 +489,12 @@ export function CallDetails({
               {call.call_id}
             </span>
 
+            {(call.is_demo || call.call_id.startsWith('megafon-call-8910')) && (
+              <span className="text-[11px] bg-amber-100 text-amber-900 border border-amber-300 px-2.5 py-0.5 rounded-full font-bold">
+                Демо-образец
+              </span>
+            )}
+
             {/* Model Badge */}
             <span className="text-[11px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full font-semibold">
               {call.model_used || 'GigaChat:Lite'}
@@ -636,6 +644,23 @@ export function CallDetails({
               <span>{exportingFormat === 'csv' ? 'Создание CSV...' : exportSuccessFormat === 'csv' ? 'CSV скачан' : 'CSV (152-ФЗ)'}</span>
             </button>
           </div>
+
+          {/* Delete Call Button for Admin & Manager */}
+          {onDeleteCall && (userRole === 'admin' || userRole === 'manager') && (
+            <button
+              type="button"
+              onClick={() => {
+                if (window.confirm(`Вы уверены, что хотите удалить звонок ${call.call_id} из базы данных?`)) {
+                  onDeleteCall(call.call_id);
+                }
+              }}
+              className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-rose-200 bg-white hover:bg-rose-50 text-rose-700 flex items-center gap-1.5 transition-all cursor-pointer shadow-3xs"
+              title="Удалить запись звонка"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+              <span>Удалить</span>
+            </button>
+          )}
         </div>
       </div>
 

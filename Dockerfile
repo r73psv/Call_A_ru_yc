@@ -46,8 +46,8 @@ WORKDIR /app
 # - ca-certificates: TLS verification with Russian Trusted CA (Минцифры) for Sber GigaChat
 RUN apk add --no-cache tzdata dumb-init wget curl ffmpeg ttf-liberation ca-certificates && \
     mkdir -p /usr/local/share/ca-certificates/ && \
-    (wget --no-check-certificate -qO /usr/local/share/ca-certificates/russian_trusted_root_ca.crt https://gu-st.ru/content/lending/russian_trusted_root_ca_pem.crt 2>/dev/null || true) && \
-    (wget --no-check-certificate -qO /usr/local/share/ca-certificates/russian_trusted_sub_ca.crt https://gu-st.ru/content/lending/russian_trusted_sub_ca_pem.crt 2>/dev/null || true) && \
+    (wget --timeout=5 -t 2 --no-check-certificate -qO /usr/local/share/ca-certificates/russian_trusted_root_ca.crt https://gu-st.ru/content/lending/russian_trusted_root_ca_pem.crt 2>/dev/null || true) && \
+    (wget --timeout=5 -t 2 --no-check-certificate -qO /usr/local/share/ca-certificates/russian_trusted_sub_ca.crt https://gu-st.ru/content/lending/russian_trusted_sub_ca_pem.crt 2>/dev/null || true) && \
     update-ca-certificates 2>/dev/null || true
 
 # Production environment variables

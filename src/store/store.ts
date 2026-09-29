@@ -27,29 +27,29 @@ const DEFAULT_CONFIG: SystemConfig = {
   activeModel: 'GigaChat:Lite',
   default_gigachat_model: 'GigaChat:Lite',
   megafon: {
-    token: 'megafon_ats_auth_token_example_123',
+    token: '',
     webhookUrl: '/api/calls/webhook',
-    autoImport: true,
-    active: true,
+    autoImport: false,
+    active: false,
     pollingEnabled: false,
     pollingIntervalMinutes: 5,
-    lastPollingTime: new Date(Date.now() - 12 * 3600000).toISOString(),
+    lastPollingTime: new Date().toISOString(),
   },
   vk: {
-    token: 'vk_group_api_token_example_xyz',
-    chatId: '2000000045',
-    enabled: true,
+    token: '',
+    chatId: '',
+    enabled: false,
     template: `🔔 *Анализ звонка #{call_id}*\n📅 *Дата:* {call_date_time}\n👤 *Клиент:* {client_name}\n📞 *Оценка оператора:* {operator_score}/10\n💬 *Резюме:* {summary}\n⚠️ *Конфликт:* {is_dispute_text}\n💡 *Рекомендации:* {recommendations}`,
   },
   yclients: {
-    userToken: 'yclients_user_token_example_777',
-    partnerToken: 'yclients_partner_token_example_888',
-    salonId: '987654',
-    enabled: true,
+    userToken: '',
+    partnerToken: '',
+    salonId: '',
+    enabled: false,
   },
 };
 
-const SEED_CALLS: CallRecord[] = [
+export const SEED_CALLS: CallRecord[] = [
   {
     call_id: 'megafon-call-89101',
     timestamp: new Date(Date.now() - 3600000 * 4).toISOString(),
@@ -179,7 +179,7 @@ export function readStoreSync(): AppDatabase {
   }
 
   memCache = {
-    calls: SEED_CALLS,
+    calls: [],
     logs: [
       {
         id: 'log-1',
@@ -244,9 +244,9 @@ export async function readStore(): Promise<AppDatabase> {
     }
   }
 
-  // 3. Fallback to seed data
+  // 3. Fallback to empty clean initial data
   memCache = {
-    calls: SEED_CALLS,
+    calls: [],
     logs: [
       {
         id: 'log-1',

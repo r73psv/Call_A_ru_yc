@@ -17,6 +17,8 @@ interface CallListProps {
   calls: CallRecord[];
   selectedCallId: string | null;
   onSelectCall: (id: string) => void;
+  onClearDemoCalls?: () => Promise<void>;
+  userRole?: string;
 }
 
 const STATUS_BADGES: Record<string, { label: string; className: string }> = {
@@ -28,7 +30,7 @@ const STATUS_BADGES: Record<string, { label: string; className: string }> = {
   NotFound: { label: 'Не найден', className: 'bg-purple-50 text-purple-600 border-purple-200' }
 };
 
-export function CallList({ calls, selectedCallId, onSelectCall }: CallListProps) {
+export function CallList({ calls, selectedCallId, onSelectCall, onClearDemoCalls, userRole }: CallListProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [scoreFilter, setScoreFilter] = useState<string>('all');
@@ -37,6 +39,12 @@ export function CallList({ calls, selectedCallId, onSelectCall }: CallListProps)
   const [tagFilter, setTagFilter] = useState<string>('all');
   const [quickPreset, setQuickPreset] = useState<string>('all');
   const [showExtendedFilters, setShowExtendedFilters] = useState(true);
+  const [isClearingDemo, setIsClearingDemo] = useState(false);
+
+  // Check if any demo calls exist
+  const hasDemoCalls = useMemo(() => {
+    return calls.some(c => c.is_demo || c.call_id === 'megafon-call-89101' || c.call_id === 'megafon-call-89102');
+  }, [calls]);
 
   // Available unique tags across all calls
   const availableTags = useMemo(() => {
@@ -257,6 +265,37 @@ export function CallList({ calls, selectedCallId, onSelectCall }: CallListProps)
             </button>
           )}
         </div>
+
+        {/* Demo Calls Notice Banner */}
+        {hasDemoCalls && (
+          <div className="bg-amber-50 border border-amber-200/80 rounded-xl p-2.5 flex items-center justify-between gap-3 text-xs text-amber-900">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
+              <span>
+                <strong>Демо-режим:</strong> Отображаются 2 демонстрационных примера звонков (добавлены по умолчанию до настройки АТС).
+              </span>
+            </div>
+            {onClearDemoCalls && (userRole === 'admin' || userRole === 'manager') && (
+              <button
+                type="button"
+                disabled={isClearingDemo}
+                onClick={async () => {
+                  if (window.confirm('Удалить демонстрационные примеры звонков из журнала?')) {
+                    setIsClearingDemo(true);
+                    try {
+                      await onClearDemoCalls();
+                    } finally {
+                      setIsClearingDemo(false);
+                    }
+                  }
+                }}
+                className="shrink-0 text-[11px] font-bold px-2.5 py-1 bg-amber-200/90 hover:bg-amber-300 text-amber-950 rounded-lg transition-colors cursor-pointer"
+              >
+                {isClearingDemo ? 'Удаление...' : 'Очистить демо'}
+              </button>
+            )}
+          </div>
+        )}
         
         {/* Search Input with quick clear */}
         <div className="relative">
@@ -592,6 +631,11 @@ export function CallList({ calls, selectedCallId, onSelectCall }: CallListProps)
                       <span className="text-[10px] font-mono font-medium text-slate-400 uppercase">
                         {call.call_id.substring(0, 14)}
                       </span>
+                      {(call.is_demo || call.call_id.startsWith('megafon-call-8910')) && (
+                        <span className="text-[9px] font-bold text-amber-800 bg-amber-100 border border-amber-300 px-1.5 py-0.2 rounded" title="Демонстрационный пример звонка">
+                          Демо-образец
+                        </span>
+                      )}
                       {call.consent_status === 'active' && (
                         <span className="text-[9px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1 py-0.2 rounded flex items-center gap-0.5">
                           <ShieldCheck className="w-2.5 h-2.5" /> 152-ФЗ

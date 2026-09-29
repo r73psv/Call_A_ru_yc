@@ -299,6 +299,34 @@ export default function App() {
     }
   };
 
+  const handleDeleteCall = async (id: string) => {
+    try {
+      await safeFetchJson(`/api/calls/${id}`, { method: 'DELETE' }, authToken, userRole);
+      setCalls(prev => prev.filter(c => c.call_id !== id));
+      if (selectedCallId === id) {
+        setSelectedCallId(null);
+        setActiveTab('list');
+      }
+      await loadData(true);
+    } catch (err: any) {
+      alert(`Ошибка удаления звонка: ${err.message}`);
+    }
+  };
+
+  const handleClearDemoCalls = async () => {
+    try {
+      await safeFetchJson('/api/calls/clear-demo', { method: 'POST' }, authToken, userRole);
+      setCalls(prev => prev.filter(c => !c.is_demo && c.call_id !== 'megafon-call-89101' && c.call_id !== 'megafon-call-89102'));
+      if (selectedCallId === 'megafon-call-89101' || selectedCallId === 'megafon-call-89102') {
+        setSelectedCallId(null);
+        setActiveTab('list');
+      }
+      await loadData(true);
+    } catch (err: any) {
+      alert(`Ошибка очистки демо-звонков: ${err.message}`);
+    }
+  };
+
   const handleClearLogs = async () => {
     if (userRole !== 'admin') return;
     try {
@@ -576,6 +604,8 @@ export default function App() {
                       setSelectedCallId(id);
                       setActiveTab('details');
                     }}
+                    onClearDemoCalls={handleClearDemoCalls}
+                    userRole={userRole}
                   />
                 </motion.div>
               )}
@@ -598,6 +628,7 @@ export default function App() {
                       onCallUpdated={(updated) => {
                         setCalls(prev => prev.map(c => c.call_id === updated.call_id ? updated : c));
                       }}
+                      onDeleteCall={handleDeleteCall}
                       userRole={userRole}
                     />
                   ) : (

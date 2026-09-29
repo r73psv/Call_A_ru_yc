@@ -85,15 +85,12 @@ RUN mkdir -p /app/keys /app/data /app/temp /app/uploads && \
     chmod 770 /app/temp /app/uploads
 
 # Copy package manifest and pre-installed dependencies from builder
-COPY package.json ./
+COPY --chown=node:node package.json ./
 COPY --from=builder --chown=node:node /app/node_modules ./node_modules
 
 # Copy pre-compiled distribution assets from builder
 COPY --from=builder --chown=node:node /app/dist ./dist
 COPY --chown=node:node fonts ./fonts
-
-# Ensure ownership across the whole application directory
-RUN chown -R node:node /app
 
 # Volumes for persistent encrypted database (152-ФЗ), credentials, temporary files, and uploads
 VOLUME ["/app/data", "/app/keys", "/app/temp", "/app/uploads"]

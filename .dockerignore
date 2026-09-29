@@ -6,5 +6,8 @@ dist
 keys/
 authorized_key*.json
 data/
+temp/
+uploads/
+*.log
 *.enc
 data-store*.json

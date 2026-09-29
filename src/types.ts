@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-export type ModelType = 'GigaChat:Lite' | 'GigaChat:Pro' | 'GigaChat:Max' | 'GigaChat:Ultra' | 'gemini' | 'gemini-lite' | 'openrouter' | 'routerai' | 'yandexgpt' | 'gigachat';
+export type ModelType = 'GigaChat:Lite' | 'GigaChat:Pro' | 'GigaChat:Max' | 'GigaChat:Ultra' | 'yandexgpt';
 
 export type GigaChatModel = 'GigaChat:Lite' | 'GigaChat:Pro' | 'GigaChat:Max' | 'GigaChat:Ultra';
 
@@ -222,8 +222,7 @@ export interface SystemConfig {
   megafon: MegafonConfig;
   vk: VkConfig;
   yclients: YclientsConfig;
-  openrouter?: { apiKey: string; model?: string; active?: boolean };
-  routerai?: { apiKey: string; model?: string; active?: boolean; endpointUrl?: string };
+  yandexSpeechKit?: { apiKey?: string; folderId?: string; configured?: boolean };
   yandexCloudConfigured?: boolean;
   gigachatConfigured?: boolean;
   encryptionActive?: boolean;

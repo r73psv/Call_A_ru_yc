@@ -4,6 +4,9 @@
  */
 
 import axios from 'axios';
+import * as fs from 'fs';
+import path from 'path';
+import { execSync } from 'child_process';
 import { getYandexAuthHeader, getYandexFolderId, isYandexAuthConfigured } from './yandex-auth.js';
 import { uploadToObjectStorage, deleteFromObjectStorage, getYandexStorageBucket } from './object-storage.js';
 import {
@@ -25,6 +28,69 @@ interface TranscriptSegment {
   text: string;
   startTime: number;
   endTime: number;
+}
+
+/**
+ * Определение формата аудио по первым сигнатурным байтам (magic numbers)
+ */
+export function detectAudioFormat(buffer: Buffer): 'mp3' | 'oggopus' | 'lpcm' {
+  if (!buffer || buffer.length < 4) return 'mp3';
+  // MP3: ID3 (0x49 0x44 0x33) или MPEG sync (0xFF 0xEx/0xFx)
+  if (buffer[0] === 0x49 && buffer[1] === 0x44 && buffer[2] === 0x33) return 'mp3';
+  if (buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0) return 'mp3';
+  // OGG: OggS (0x4F 0x67 0x67 0x53)
+  if (buffer[0] === 0x4f && buffer[1] === 0x67 && buffer[2] === 0x67 && buffer[3] === 0x53) return 'oggopus';
+  // WAV: RIFF
+  if (buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46) return 'lpcm';
+  return 'mp3';
+}
+
+/**
+ * Сжатие аудиозаписи с помощью ffmpeg в моно 16kHz 24kbps MP3
+ * (уменьшает объем файла в 3-5 раз, сохраняя максимальную разборчивость речи для SpeechKit)
+ */
+function compressAudioToMonoMp3(buffer: Buffer): Buffer | null {
+  try {
+    const tempDir = path.join(process.cwd(), 'temp');
+    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+    const inPath = path.join(tempDir, `comp-in-${Date.now()}-${Math.random().toString(36).slice(2)}.mp3`);
+    const outPath = path.join(tempDir, `comp-out-${Date.now()}-${Math.random().toString(36).slice(2)}.mp3`);
+    fs.writeFileSync(inPath, buffer);
+    execSync(`ffmpeg -y -i "${inPath}" -vn -ac 1 -ar 16000 -b:a 24k "${outPath}" 2>/dev/null`, { timeout: 30000 });
+    if (fs.existsSync(outPath)) {
+      const result = fs.readFileSync(outPath);
+      try { fs.unlinkSync(inPath); } catch {}
+      try { fs.unlinkSync(outPath); } catch {}
+      return result;
+    }
+    try { fs.unlinkSync(inPath); } catch {}
+  } catch (err: any) {
+    console.warn('[SpeechKit] Ошибка ffmpeg сжатия аудио:', err.message);
+  }
+  return null;
+}
+
+/**
+ * Разбиение аудиозаписи на 25-секундные сегменты с помощью ffmpeg
+ * Позволяет распознавать разговоры любой длительности без настройки Object Storage
+ */
+function splitAudioIntoChunks(buffer: Buffer, chunkSeconds: number = 25): Buffer[] {
+  const chunks: Buffer[] = [];
+  try {
+    const tempDir = path.join(process.cwd(), 'temp', `chunks-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    fs.mkdirSync(tempDir, { recursive: true });
+    const inPath = path.join(tempDir, 'source.mp3');
+    fs.writeFileSync(inPath, buffer);
+    execSync(`ffmpeg -y -i "${inPath}" -vn -ac 1 -ar 16000 -b:a 24k -f segment -segment_time ${chunkSeconds} "${path.join(tempDir, 'chunk_%03d.mp3')}" 2>/dev/null`, { timeout: 60000 });
+    const files = fs.readdirSync(tempDir).filter(f => f.startsWith('chunk_') && f.endsWith('.mp3')).sort();
+    for (const f of files) {
+      chunks.push(fs.readFileSync(path.join(tempDir, f)));
+    }
+    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
+  } catch (err: any) {
+    console.warn('[SpeechKit] Ошибка ffmpeg разбиения аудио:', err.message);
+  }
+  return chunks;
 }
 
 /**
@@ -184,43 +250,82 @@ export async function transcribeWithRetry(audioBuffer: Buffer): Promise<string> 
 
 export async function transcribeWithSpeechKit(audioBuffer: Buffer): Promise<string> {
   if (!isYandexAuthConfigured()) {
-    throw new Error('Yandex Cloud SpeechKit не настроен (отсутствует authorized_key.json или YC_API_KEY)');
+    throw new Error('Yandex Cloud SpeechKit не настроен: укажите API-ключ (YC_API_KEY) или загрузите authorized_key.json в разделе настроек системы');
   }
 
   const authHeader = await getYandexAuthHeader();
   const bucket = getYandexStorageBucket();
 
-  // If Yandex Object Storage is configured, use asynchronous 2-channel recognition (recommended for calls)
+  // 1. Если настроен Yandex Object Storage, используем двухканальное асинхронное распознавание
   if (bucket) {
-    const objectKey = `audio/${Date.now()}-${Math.random().toString(36).slice(2)}.mp3`;
-    await uploadToObjectStorage(audioBuffer, objectKey);
-    const audioUri = `https://storage.yandexcloud.net/${bucket}/${objectKey}`;
-
     try {
-      return await requestAndPollLongRunning(audioUri, authHeader);
-    } finally {
-      await deleteFromObjectStorage(objectKey).catch(err =>
-        console.error('[Object Storage] Ошибка удаления временного аудиофайла:', err.message)
-      );
+      const objectKey = `audio/${Date.now()}-${Math.random().toString(36).slice(2)}.mp3`;
+      await uploadToObjectStorage(audioBuffer, objectKey);
+      const audioUri = `https://storage.yandexcloud.net/${bucket}/${objectKey}`;
+
+      try {
+        return await requestAndPollLongRunning(audioUri, authHeader);
+      } finally {
+        await deleteFromObjectStorage(objectKey).catch(err =>
+          console.error('[Object Storage] Ошибка удаления временного аудиофайла:', err.message)
+        );
+      }
+    } catch (asyncErr: any) {
+      console.warn('[SpeechKit] Ошибка асинхронного распознавания через Object Storage:', asyncErr.message);
+      console.log('[SpeechKit] Переключение на прямое синхронное распознавание...');
     }
   }
 
-  // Fallback: If Object Storage is not configured but file is small (< 1 MB), try synchronous recognize
-  if (audioBuffer.length < 1024 * 1024) {
+  // 2. Прямое синхронное распознавание для файлов до 1 МБ
+  if (audioBuffer.length < 1000 * 1024) {
     try {
-      console.log('[SpeechKit] Бакет Object Storage не настроен. Попытка синхронного распознавания короткой записи (< 1 МБ)...');
-      return await transcribeSynchronous(audioBuffer, authHeader);
+      const result = await transcribeSynchronous(audioBuffer, authHeader);
+      if (result && result.trim()) {
+        return refineTranscriptRoles(result.trim());
+      }
     } catch (syncErr: any) {
-      console.warn('[SpeechKit] Синхронное распознавание завершилось с ошибкой:', syncErr.message);
-      throw new Error(
-        'Для стабильного двухканального распознавания звонков через Yandex SpeechKit настройте бакет Yandex Object Storage в панели администратора.'
-      );
+      console.warn('[SpeechKit] Синхронное распознавание исходного файла завершилось с ошибкой:', syncErr.message);
     }
   }
 
-  throw new Error(
-    'Файл аудиозаписи превышает 1 МБ. Для распознавания необходимо настроить бакет Yandex Object Storage (карточка «Yandex Object Storage» в панели настроек).'
-  );
+  // 3. Если Object Storage не настроен или файл > 1 МБ: сжатие через ffmpeg в моно 16kHz 24kbps
+  console.log(`[SpeechKit] Аудиофайл (${Math.round(audioBuffer.length / 1024)} КБ) превышает лимит или требует нормализации. Сжатие ffmpeg...`);
+  const compressed = compressAudioToMonoMp3(audioBuffer);
+  if (compressed && compressed.length < 1000 * 1024) {
+    try {
+      console.log(`[SpeechKit] Сжато до ${Math.round(compressed.length / 1024)} КБ. Запуск синхронного распознавания...`);
+      const result = await transcribeSynchronous(compressed, authHeader);
+      if (result && result.trim()) {
+        return refineTranscriptRoles(result.trim());
+      }
+    } catch (compErr: any) {
+      console.warn('[SpeechKit] Ошибка распознавания сжатого аудио:', compErr.message);
+    }
+  }
+
+  // 4. Для длинных разговоров: разделение ffmpeg на 25-секундные сегменты
+  console.log('[SpeechKit] Разделение длинной записи на 25-секундные сегменты для пошагового синхронного распознавания...');
+  const chunks = splitAudioIntoChunks(compressed || audioBuffer, 25);
+  if (chunks.length > 0) {
+    const chunkTexts: string[] = [];
+    for (let i = 0; i < chunks.length; i++) {
+      try {
+        const text = await transcribeSynchronous(chunks[i], authHeader);
+        if (text && text.trim()) {
+          chunkTexts.push(text.trim());
+        }
+      } catch (chunkErr: any) {
+        console.warn(`[SpeechKit] Ошибка распознавания сегмента ${i + 1}/${chunks.length}:`, chunkErr.message);
+      }
+    }
+    if (chunkTexts.length > 0) {
+      const fullText = chunkTexts.join(' ');
+      console.log(`[SpeechKit] Успешно расшифровано ${chunkTexts.length} сегментов (${fullText.length} симв.)`);
+      return refineTranscriptRoles(fullText);
+    }
+  }
+
+  throw new Error('Не удалось расшифровать аудиозапись через Yandex SpeechKit. Проверьте правильность настроек API-ключа или бакета Object Storage.');
 }
 
 async function requestAndPollLongRunning(
@@ -234,6 +339,7 @@ async function requestAndPollLongRunning(
 
   console.log(`[SpeechKit] Отправка запроса на асинхронное распознавание: ${audioUri}`);
 
+  // Для формата MP3 параметр sampleRateHertz не указывается по официальной документации Yandex Cloud
   const startRes = await axios.post(
     url,
     {
@@ -242,7 +348,6 @@ async function requestAndPollLongRunning(
           languageCode: 'ru-RU',
           model: 'general',
           audioEncoding: 'MP3',
-          sampleRateHertz: 8000,
           profanityFilter: false,
           literatureText: true,
           rawResults: false,
@@ -296,10 +401,12 @@ async function transcribeSynchronous(
   authHeader: string
 ): Promise<string> {
   const folderId = getYandexFolderId();
+  const format = detectAudioFormat(audioBuffer);
   const query = new URLSearchParams({
     lang: 'ru-RU',
     topic: 'general',
     profanityFilter: 'false',
+    format: format,
   });
   if (folderId) {
     query.set('folderId', folderId);
@@ -313,7 +420,7 @@ async function transcribeSynchronous(
         Authorization: authHeader,
         'Content-Type': 'application/octet-stream',
       },
-      timeout: 30000,
+      timeout: 45000,
     }
   );
 

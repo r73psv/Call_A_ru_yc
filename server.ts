@@ -11,6 +11,7 @@ import { dirname } from 'path';
 import dotenv from 'dotenv';
 import { CallRecord, LogEntry, SystemConfig, ModelType, DashboardStats, KeyFacts, VkConfig, YclientsConfig, GigaChatModel, SystemNotification, NotificationType, UserRole } from './src/types.js';
 import { transcribeWithRetry, fixDuplicatedTranscript, refineTranscriptRoles } from './src/services/speechkit.js';
+import { transcribeAudio } from './src/services/transcriptionService.js';
 import { analyzeWithRetry, getGigaChatQueueStatus } from './src/services/gigachat.js';
 import { anonymizeTranscript, maskPhone } from './src/services/anonymize.js';
 import { readStoreSync, writeStore } from './src/store/store.js';
@@ -116,7 +117,7 @@ const SEED_CALLS: CallRecord[] = [
     call_id: 'megafon-call-89101',
     timestamp: new Date(Date.now() - 3600000 * 4).toISOString(),
     duration_seconds: 145,
-    model_used: 'gemini',
+    model_used: 'GigaChat:Lite',
     audio_url: 'https://cp.megafon.ru/record/megafon-call-89101.mp3',
     client_name: 'Елена Кузнецова (3344)',
     operator_name: 'Мария (администратор)',
@@ -145,7 +146,7 @@ const SEED_CALLS: CallRecord[] = [
     call_id: 'megafon-call-89102',
     timestamp: new Date(Date.now() - 3600000 * 3).toISOString(),
     duration_seconds: 180,
-    model_used: 'gemini',
+    model_used: 'GigaChat:Lite',
     audio_url: 'https://cp.megafon.ru/record/megafon-call-89102.mp3',
     client_name: 'Анна Васильева (6677)',
     operator_name: 'Дмитрий (менеджер)',
@@ -536,283 +537,7 @@ async function analyzeCallWithRouterAI(
   return getFallbackAnalysis(transcriptInput, 'RouterAI отключен');
 }
 
-/* DEPRECATED_ROUTERAI_START
-ЯЗЫК СТЕНОГРАММЫ И АНАЛИЗА — СТРОГО РУССКИЙ. Все поля JSON (стенограмма, резюме, ключевые факты, рекомендации, комментарии) ДОЛЖНЫ БЫТЬ ИСКЛЮЧИТЕЛЬНО НА РУССКОМ ЯЗЫКЕ.
-
-КОНТЕКСТ САЛОНА КРАСОТЫ:
-- Официальное название салона: «Лик 28» (Салон красоты «Лик 28»). В разговорной речи может звучать как «Лик двадцать восемь», «салон Лик 28», «студия Лик 28».
-- ПРАВИЛЬНОЕ НАИМЕНОВАНИЕ: При транскрипции и анализе всегда фиксируй название салона строго как «Лик 28» (не искажай в «Ликс», «Лайк», «Лиг», «Элик» и т.п.).
-- СТАНДАРТ ПРИВЕТСТВИЯ: Название «Лик 28» является официальным эталонным брендом компании. Если администратор представляется от имени салона «Лик 28» или «Салон красоты Лик 28», это абсолютно правильно! Категорически запрещено считать это ошибкой или снижать оценку оператора.
-
-СТРОГИЕ ПРАВИЛА И ИСКЛЮЧЕНИЕ ГАЛЛЮЦИНАЦИЙ:
-1. Проанализируй разговор строго по реально фактически прозвучавшим данным. КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО выдумывать детали, имена клиентов, номера заказов (например "заказ №12345"), цены, товары или услуги, которых НЕ БЫЛО в записи или тексте!
-2. ЕСЛИ НА АУДИО ИЛИ В ТЕКСТЕ СРАБОТАЛ АВТООТВЕТЧИК, АВТОИНФОРМАТОР ИЛИ АБОНЕНТ НЕДОСТУПЕН (например: "Абонент сейчас не может ответить...", "Перезвоните позднее", "Оставьте сообщение после сигнала"):
-   - В "transcript" выведи СТРОГО реально прозвучавшую фразу (например: "Автоответчик: Абонент сейчас не может ответить на ваш звонок. Попробуйте перезвонить позднее.").
-   - В "summary" выведи СТРОГО: "Разговор не состоялся: сработал автоответчик или системный автоинформатор".
-   - В "operator_score" выведи null (так как диалога с оператором не было).
-   - В "operator_comment" напиши: "Разговор с клиентом не состоялся: на линии сработал автоответчик или автоинформатор".
-   - В "key_facts.call_outcome" напиши: "автоответчик".
-   - В "key_facts.client_issue" напиши: "Автоответчик / Абонент недоступен".
-
-ВАЖНО: ТВОЙ ОТВЕТ ДОЛЖЕН БЫТЬ СТРОГО В ФОРМАТЕ RAW JSON! НЕ ДОБАВЛЯЙ НИКАКИХ ВВОДНЫХ СЛОВ ИЛИ ПРИВЕТСТВИЙ ТИПА "Пожалуйста", "Вот результат" И Т.П. ПЕРВЫЙ СИМВОЛ ОТВЕТА — '{', ПОСЛЕДНИЙ — '}'.
-
-Схема JSON:
-{
-  "transcript": "дословная стенограмма на русском языке",
-  "summary": "краткая суть разговора по фактам на русском языке",
-  "key_facts": {
-    "is_dispute": false,
-    "dispute_reason": null,
-    "promises": [],
-    "tone_client": "нейтральный",
-    "tone_manager": "спокойный",
-    "call_outcome": "успешно",
-    "client_issue": "вопрос клиента"
-  },
-  "trigger_phrases": [],
-  "recommendations": ["рекомендация 1 на русском языке"],
-  "operator_score": 9,
-  "operator_comment": "комментарий к работе оператора на русском языке"
-}`;
-
-  const cleanText = (transcriptInput || '').trim();
-  const hasAudio = !!audioBase64;
-
-  appendLog('info', 'routerai', `Запрос к API RouterAI (Модель: ${modelName}, URL: ${baseUrl}, Аудио: ${hasAudio ? 'Да (мультимодальный)' : 'Нет'})...`);
-
-  // Build primary user message content supporting direct audio via input_audio / base64
-  let userMessageContent: any;
-  if (hasAudio && (!cleanText || cleanText === 'Загрузка аудиозаписи...' || cleanText === 'Обработка аудио...')) {
-    const mimeType = audioBase64!.mimeType || 'audio/mp3';
-    const format = mimeType.includes('wav') ? 'wav' : mimeType.includes('ogg') ? 'ogg' : mimeType.includes('m4a') ? 'm4a' : 'mp3';
-    userMessageContent = [
-      {
-        type: 'text',
-        text: 'Прослушай эту аудиозапись телефонного разговора. Официальное название салона — «Лик 28» (Салон красоты «Лик 28»). Сделай её точную дословную стенограмму (по репликам "Менеджер:", "Клиент:") и выполни полный анализ качества обслуживания по указанной схеме JSON. Верни строго RAW JSON.'
-      },
-      {
-        type: 'input_audio',
-        input_audio: {
-          data: audioBase64!.data,
-          format: format
-        }
-      }
-    ];
-  } else {
-    userMessageContent = `Текст/данные диалога (Салон красоты «Лик 28»):\n${cleanText || 'Аудиозапись телефонного разговора.'}\n\nВыполни анализ и верни строго JSON без вводных слов.`;
-  }
-
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000);
-
-    let response = await fetch(`${baseUrl}/chat/completions`, {
-      method: 'POST',
-      signal: controller.signal,
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: modelName,
-        messages: [
-          { role: 'system', content: promptSystem },
-          { role: 'user', content: userMessageContent }
-        ],
-        temperature: 0.2
-      })
-    });
-
-    // Fallback attempt with audio_url data-URI if input_audio format is rejected
-    if (!response.ok && Array.isArray(userMessageContent)) {
-      const mimeType = audioBase64!.mimeType || 'audio/mp3';
-      appendLog('warning', 'routerai', `Первичный запрос с input_audio вернул HTTP ${response.status}. Пробуем формат audio_url (data-URI)...`);
-      
-      const altUserMessageContent = [
-        {
-          type: 'text',
-          text: 'Прослушай эту аудиозапись телефонного разговора. Официальное название салона — «Лик 28» (Салон красоты «Лик 28»). Сделай её точную дословную стенограмму (по репликам "Менеджер:", "Клиент:") и выполни полный анализ качества обслуживания по указанной схеме JSON. Верни строго RAW JSON.'
-        },
-        {
-          type: 'audio_url',
-          audio_url: {
-            url: `data:${mimeType};base64,${audioBase64!.data}`
-          }
-        }
-      ];
-
-      response = await fetch(`${baseUrl}/chat/completions`, {
-        method: 'POST',
-        signal: controller.signal,
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: modelName,
-          messages: [
-            { role: 'system', content: promptSystem },
-            { role: 'user', content: altUserMessageContent }
-          ],
-          temperature: 0.2
-        })
-      });
-    }
-
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      const errText = await response.text();
-      let routerAiMsg = errText;
-      try {
-        const errJson = JSON.parse(errText);
-        if (errJson.error?.message) {
-          routerAiMsg = errJson.error.message;
-        }
-      } catch {
-        // use raw text
-      }
-
-      // If direct audio in RouterAI is unsupported by the model or failed, trigger Gemini fallback transcription
-      if (hasAudio && (!cleanText || cleanText === 'Загрузка аудиозаписи...')) {
-        appendLog('warning', 'routerai', `Прямая передача аудио в RouterAI не поддерживается моделью ${modelName} или вернула ошибку (${routerAiMsg}). Запуск фолбэк-расшифровки через Gemini...`);
-        const geminiClient = getGeminiClient();
-        if (geminiClient) {
-          try {
-            const gResponse = await geminiClient.models.generateContent({
-              model: 'gemini-2.5-flash',
-              contents: [
-                {
-                  role: 'user',
-                  parts: [
-                    { inlineData: { mimeType: audioBase64!.mimeType, data: audioBase64!.data } },
-                    { text: 'Сделай точную дословную расшифровку (стенограмму) этой аудиозаписи на русском языке. Официальное название салона — «Лик 28» (Салон красоты «Лик 28»). Напиши диалог репликами в формате "Менеджер: ...", "Клиент: ...". Напиши только текст диалога без дополнительных комментариев.' }
-                  ]
-                }
-              ]
-            });
-            if (gResponse.text && gResponse.text.trim()) {
-              const transcribedText = gResponse.text.trim();
-              appendLog('success', 'routerai', `Фолбэк-транскрипция выполнена (${transcribedText.length} символов). Передача текста диалога в RouterAI...`);
-              return await analyzeCallWithRouterAI(transcribedText, undefined, config);
-            }
-          } catch (gErr: any) {
-            appendLog('warning', 'routerai', `Фолбэк-расшифровка через Gemini не удалась: ${gErr.message || gErr}`);
-          }
-        }
-      }
-
-      let hint = '';
-      if (routerAiMsg.includes('Missing Authentication') || routerAiMsg.includes('Unauthorized') || routerAiMsg.includes('Invalid API Key')) {
-        hint = ' -> Проверьте правильность API ключа RouterAI в настройках.';
-      } else if (routerAiMsg.includes('Insufficient credits') || routerAiMsg.includes('balance') || routerAiMsg.includes('credit')) {
-        hint = ' -> Недостаточно средств/баланса на аккаунте RouterAI.';
-      }
-
-      throw new Error(`RouterAI API (HTTP ${response.status}): ${routerAiMsg}${hint}`);
-    }
-
-    const data = await response.json();
-    const rawText = data.choices?.[0]?.message?.content || '{}';
-    const parsed = extractAndParseLLMJson(rawText, transcriptInput, 'routerai');
-
-    // If RouterAI returned HTTP 200 OK, but the LLM output indicates it didn't receive audio/text
-    const summaryStr = (parsed.summary || '').toLowerCase();
-    const transcriptStr = (parsed.transcript || '').toLowerCase();
-    const commentStr = (parsed.operator_comment || '').toLowerCase();
-    const isMissingDataMessage = 
-      summaryStr.includes('не предоставил текст') ||
-      summaryStr.includes('не содержит данных') ||
-      summaryStr.includes('отсутствует текст') ||
-      summaryStr.includes('не содержит текста') ||
-      summaryStr.includes('предоставьте аудиозапись') ||
-      summaryStr.includes('предоставьте текст') ||
-      summaryStr.includes('без исходных данных') ||
-      summaryStr.includes('не могу сформировать json') ||
-      transcriptStr.includes('не предоставлен') ||
-      transcriptStr.includes('предоставьте аудиозапись') ||
-      transcriptStr.includes('без исходных данных') ||
-      commentStr.includes('не предоставил') ||
-      commentStr.includes('предоставьте аудиозапись') ||
-      commentStr.includes('запросила исходные данные');
-
-    if (isMissingDataMessage && hasAudio && (!cleanText || cleanText === 'Загрузка аудиозаписи...')) {
-      appendLog('warning', 'routerai', `RouterAI (${modelName}) вернул ответ о нехватке текста диалога. Запуск авто-расшифровки записи через Gemini...`);
-      const geminiClient = getGeminiClient();
-      if (geminiClient) {
-        try {
-          const gResponse = await geminiClient.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: [
-              {
-                role: 'user',
-                parts: [
-                  { inlineData: { mimeType: audioBase64!.mimeType, data: audioBase64!.data } },
-                  { text: 'Сделай точную дословную расшифровку (стенограмму) этой аудиозаписи на русском языке. Официальное название салона — «Лик 28» (Салон красоты «Лик 28»). Если запись пустая или тишина — напиши "Аудиозапись не содержит разборчивой речи". Напиши диалог репликами в формате "Менеджер: ...", "Клиент: ...". Напиши только текст диалога без дополнительных комментариев.' }
-                ]
-              }
-            ]
-          });
-          if (gResponse.text && gResponse.text.trim()) {
-            const transcribedText = gResponse.text.trim();
-            appendLog('success', 'routerai', `Авто-расшифровка через Gemini выполнена (${transcribedText.length} символов). Повторная передача диалога в RouterAI...`);
-            return await analyzeCallWithRouterAI(transcribedText, undefined, config);
-          }
-        } catch (gErr: any) {
-          appendLog('warning', 'routerai', `Авто-расшифровка через Gemini не удалась: ${gErr.message || gErr}`);
-        }
-      }
-    }
-
-    const usage = data.usage;
-    const promptTok = usage?.prompt_tokens ?? Math.ceil(((cleanText || '').length + 1200) / 4);
-    const compTok = usage?.completion_tokens ?? Math.ceil(rawText.length / 4);
-    parsed.tokens_used = {
-      prompt_tokens: promptTok,
-      completion_tokens: compTok,
-      total_tokens: usage?.total_tokens ?? (promptTok + compTok)
-    };
-
-    appendLog('success', 'routerai', `Звонок успешно проанализирован через RouterAI API (${modelName}). Токены: ${parsed.tokens_used.total_tokens}`);
-    return parsed;
-  } catch (err: any) {
-    if (hasAudio && (!cleanText || cleanText === 'Загрузка аудиозаписи...')) {
-      appendLog('warning', 'routerai', `Ошибка прямого запроса аудио в RouterAI (${err.message || err}). Пробуем фолбэк-расшифровку через Gemini...`);
-      const geminiClient = getGeminiClient();
-      if (geminiClient) {
-        try {
-          const gResponse = await geminiClient.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: [
-              {
-                role: 'user',
-                parts: [
-                  { inlineData: { mimeType: audioBase64!.mimeType, data: audioBase64!.data } },
-                  { text: 'Сделай точную дословную расшифровку (стенограмму) этой аудиозаписи на русском языке. Официальное название салона — «Лик 28» (Салон красоты «Лик 28»). Если запись пустая или тишина — напиши "Аудиозапись не содержит разборчивой речи". Напиши диалог репликами в формате "Менеджер: ...", "Клиент: ...". Напиши только текст диалога без дополнительных комментариев.' }
-                ]
-              }
-            ]
-          });
-          if (gResponse.text && gResponse.text.trim()) {
-            const transcribedText = gResponse.text.trim();
-            appendLog('success', 'routerai', `Фолбэк-транскрипция через Gemini выполнена (${transcribedText.length} символов). Передача текста диалога в RouterAI...`);
-            return await analyzeCallWithRouterAI(transcribedText, undefined, config);
-          }
-        } catch (gErr: any) {
-          appendLog('warning', 'routerai', `Фолбэк-расшифровка через Gemini не удалась: ${gErr.message || gErr}`);
-        }
-      }
-    }
-
-    const isTimeout = err.name === 'AbortError';
-    const errMsg = isTimeout
-      ? `Таймаут подключения (60с) к ${baseUrl}. Сервер недоступен.`
-      : `Ошибка вызова RouterAI (${modelName}): ${err.message || err}`;
-    appendLog('error', 'routerai', errMsg);
-    return getFallbackAnalysis(transcriptInput, errMsg);
-  }
-}
-*/
+// В приложении используются исключительно российские модели (Сбер GigaChat, Yandex Cloud)
 
 // Helper to check if a call record failed due to technical/limitation error and needs reanalysis
 function isTechnicalFailedCall(call: any): boolean {
@@ -950,7 +675,7 @@ async function executeSingleModelAttempt(
   }
 }
 
-// Unified SpeechKit STT + GigaChat LLM Calling Logic with 152-ФЗ Anonymization
+// Unified Yandex SpeechKit STT + Sber GigaChat LLM Calling Logic with 152-ФЗ Anonymization
 async function analyzeCallTextOrAudio(
   requestedModel: string,
   transcriptInput: string,
@@ -962,7 +687,10 @@ async function analyzeCallTextOrAudio(
     cleanTranscript === 'Загрузка аудиозаписи...' ||
     cleanTranscript === 'Обработка аудио...' ||
     cleanTranscript.startsWith('Аудиозапись не была') ||
-    cleanTranscript.startsWith('Стенограмма отсутствует')
+    cleanTranscript.startsWith('Стенограмма отсутствует') ||
+    cleanTranscript.includes('не содержит разборчивой речи') ||
+    cleanTranscript.includes('Стенограмма ожидает') ||
+    cleanTranscript.includes('не была загружена')
   ) {
     cleanTranscript = '';
   }
@@ -972,20 +700,25 @@ async function analyzeCallTextOrAudio(
     return getFallbackAnalysis('', 'не удавалось скачать');
   }
 
-  // 1. If audio is available and transcript is missing, transcribe via Yandex SpeechKit
-  if (!cleanTranscript && audioBase64 && audioBase64.data) {
+  let sttErrorReason = '';
+  const hasAudio = !!(audioBase64 && audioBase64.data);
+
+  // 1. If audio is available and transcript is missing, transcribe via Russian model Yandex SpeechKit
+  if (!cleanTranscript && hasAudio) {
     try {
-      appendLog('info', 'speechkit', 'Запуск распознавания аудиозаписи через Yandex SpeechKit (модель general)...');
-      const audioBuffer = Buffer.from(audioBase64.data, 'base64');
-      const sttText = await transcribeWithRetry(audioBuffer);
-      if (sttText && sttText.trim()) {
-        cleanTranscript = fixDuplicatedTranscript(sttText.trim());
+      const audioBuffer = Buffer.from(audioBase64!.data, 'base64');
+      const mime = audioBase64!.mimeType || 'audio/mp3';
+      const sttResult = await transcribeAudio(audioBuffer, mime, (type, msg) => appendLog(type, 'speechkit', msg));
+      if (sttResult.text && sttResult.text.trim()) {
+        cleanTranscript = fixDuplicatedTranscript(sttResult.text.trim());
         appendLog('success', 'speechkit', `Аудиозапись успешно расшифрована Yandex SpeechKit (${cleanTranscript.length} симв.)`);
       } else {
-        appendLog('warning', 'speechkit', 'Yandex SpeechKit вернул пустой текст или запись не содержит разборчивой речи.');
+        sttErrorReason = sttResult.error || 'Распознавание речи вернуло пустой текст (в записи отсутствует разборчивая речь или тишина)';
+        appendLog('warning', 'speechkit', sttErrorReason);
       }
     } catch (sttErr: any) {
-      appendLog('error', 'speechkit', `Ошибка распознавания речи через SpeechKit: ${sttErr.message || sttErr}`);
+      sttErrorReason = sttErr.message || String(sttErr);
+      appendLog('error', 'speechkit', `Ошибка распознавания речи: ${sttErrorReason}`);
     }
   }
 
@@ -994,10 +727,61 @@ async function analyzeCallTextOrAudio(
   }
 
   if (!cleanTranscript) {
+    if (hasAudio) {
+      const audioKbytes = Math.round((Buffer.from(audioBase64!.data, 'base64').length) / 1024);
+      appendLog('warning', 'gigachat', `Аудиозапись получена (${audioKbytes} КБ), но расшифровка речи не вернула текст (${sttErrorReason}).`);
+      
+      const isMissingConfig = sttErrorReason.includes('не настроен') || sttErrorReason.includes('ключ');
+      
+      if (isMissingConfig) {
+        return {
+          transcript: `Стенограмма ожидает расшифровки. Аудиозапись доступна в плеере (${audioKbytes} КБ).`,
+          summary: `Аудиозапись звонка доступна для прослушивания в плеере, однако автоматическая расшифровка не была выполнена (${sttErrorReason}). Вы можете прослушать запись в плеере или указать API-ключ Yandex Cloud в панели управления и нажать «Пересчитать».`,
+          key_facts: {
+            is_dispute: false,
+            dispute_reason: null,
+            promises: [],
+            tone_client: 'нейтральный',
+            tone_manager: 'нейтральный',
+            call_outcome: 'требует настройки STT',
+            booking_status: 'не применимо',
+            client_issue: 'Аудиозапись загружена и воспроизводится в плеере, расшифровка речи ожидает настройки ключа'
+          },
+          trigger_phrases: [],
+          recommendations: [
+            'Прослушайте аудиозапись разговора в плеере ниже.',
+            'Для автоматической расшифровки перейдите в «Настройки системы» и укажите ключ Yandex Cloud SpeechKit.'
+          ],
+          operator_score: null,
+          operator_comment: `Запись разговора доступна для прослушивания в плеере (${audioKbytes} КБ). Оценка оператора ожидает расшифровки речи Yandex SpeechKit.`
+        };
+      } else {
+        // Audio had genuine silence, beep, or answering machine noise
+        return {
+          transcript: 'Аудиозапись не содержит разборчивой устной речи (тишина или звуковой сигнал).',
+          summary: 'Разговор не состоялся: в аудиозаписи отсутствует речь (зафиксирована тишина или короткий сигнал). Аудиозапись доступна для прослушивания в плеере ниже.',
+          key_facts: {
+            is_dispute: false,
+            dispute_reason: null,
+            promises: [],
+            tone_client: 'нейтральный',
+            tone_manager: 'нейтральный',
+            call_outcome: 'автоответчик',
+            booking_status: 'не применимо',
+            client_issue: 'Звонок без устной речи / тишина'
+          },
+          trigger_phrases: [],
+          recommendations: ['При необходимости свяжитесь с клиентом повторно.'],
+          operator_score: null,
+          operator_comment: 'Разговор с клиентом не состоялся: на аудиозаписи отсутствует диалог.'
+        };
+      }
+    }
+
     appendLog('warning', 'gigachat', 'Отсутствует аудиозапись или текст диалога для анализа. Вызов ИИ пропущен.');
     return {
-      transcript: 'Аудиозапись не была загружена или не содержит разборчивой речи',
-      summary: 'Аудиозапись не была загружена или не содержит разборчивой речи. Анализ разговора невозможно выполнить.',
+      transcript: 'Запись разговора и стенограмма отсутствуют',
+      summary: 'Звонок не состоялся или аудиозапись не была сохранена на сервере АТС.',
       key_facts: {
         is_dispute: false,
         dispute_reason: null,
@@ -1010,7 +794,7 @@ async function analyzeCallTextOrAudio(
       trigger_phrases: [],
       recommendations: ['Обеспечить наличие аудиозаписи или текста диалога для проведения анализа.'],
       operator_score: null,
-      operator_comment: 'Оценка не выставлена: аудиозапись не загружена или не содержит разборчивой речи.'
+      operator_comment: 'Оценка не выставлена: аудиозапись отсутствует.'
     };
   }
 
@@ -1055,10 +839,10 @@ function getFallbackAnalysis(transcript: string, errorReason?: string): Partial<
     let readableError = 'Технический сбой аналитики.';
     if (errorReason === 'не удавалось скачать') {
       readableError = 'Ошибка: не удавалось скачать аудиофайл записи разговора с сервера АТС.';
-    } else if (errorReason === 'отсутствует ключ Gemini') {
-      readableError = 'Ошибка: отсутствует ключ Gemini (GEMINI_API_KEY) в настройках системы.';
+    } else if (errorReason === 'отсутствует ключ GigaChat') {
+      readableError = 'Ошибка: отсутствуют данные авторизации Сбер GigaChat (GIGACHAT_AUTH_KEY) в настройках системы.';
     } else if (errorReason === 'исчерпан лимит токенов') {
-      readableError = 'Ошибка: исчерпан лимит токенов или превышена квота запросов к API Gemini.';
+      readableError = 'Ошибка: превышена квота или лимит запросов к API GigaChat.';
     } else {
       readableError = errorReason;
     }
@@ -1659,7 +1443,7 @@ async function findRealRecordingLinkFromApi(communicationId: string, token: stri
   return null;
 }
 
-// Download remote audio recording from Megafon VATS and encode as base64 for Gemini
+// Download remote audio recording from Megafon VATS and encode as base64
 async function downloadAudioAsBase64(url: string, token?: string): Promise<{ data: string; mimeType: string } | null> {
   try {
     const cleanToken = token ? token.trim().replace(/^['"]|['"]$/g, '') : '';
@@ -2073,7 +1857,7 @@ async function importCallRecord(extCall: any): Promise<boolean> {
       call_id: extCall.call_id,
       timestamp: extCall.timestamp,
       duration_seconds: 0,
-      model_used: db.config.activeModel || 'gemini',
+      model_used: db.config.activeModel || 'GigaChat:Lite',
       transcript: 'Звонок не состоялся. Длительность разговора 00:00 (пропущенный вызов или сброс). Запись разговора и стенограмма отсутствуют.',
       summary: isIncoming ? 'Пропущенный входящий звонок (00:00)' : 'Исходящий звонок, абонент не ответил (00:00)',
       key_facts: {
@@ -2181,7 +1965,7 @@ async function importCallRecord(extCall: any): Promise<boolean> {
         }
 
         const analysisResult = await analyzeCallTextOrAudio(
-          db.config.activeModel || 'gemini',
+          db.config.activeModel || 'GigaChat:Lite',
           extCall.transcript,
           audioBase64,
           audioDownloadFailed
@@ -3218,7 +3002,7 @@ app.post('/api/calls/:id/reanalyze', async (req, res) => {
 app.post('/api/calls/analyze', async (req, res) => {
   const { transcript, client_name, operator_name, duration_seconds, model, audioBase64 } = req.body;
   const db = readDb();
-  const selectedModel = model || db.config.activeModel || 'gemini';
+  const selectedModel = model || db.config.activeModel || 'GigaChat:Lite';
 
   const durationSec = duration_seconds !== undefined ? Number(duration_seconds) : 120;
 
@@ -3370,9 +3154,12 @@ async function performCallReanalysis(callId: string): Promise<any> {
     call.transcript !== 'Обработка аудио...' &&
     !call.transcript.startsWith('Аудиозапись не была') &&
     !call.transcript.startsWith('Стенограмма отсутствует') &&
+    !call.transcript.includes('не содержит разборчивой речи') &&
+    !call.transcript.includes('Стенограмма ожидает') &&
+    !call.transcript.includes('не была загружена') &&
     !call.transcript.includes('предоставьте аудиозапись')) ? call.transcript : '';
 
-  const selectedModel = db.config.activeModel || 'gemini';
+  const selectedModel = db.config.activeModel || 'GigaChat:Lite';
 
   // Mark status as processing and record attempt metadata
   call.status = 'processing';
@@ -3579,14 +3366,6 @@ app.post('/api/config', (req, res) => {
     yclients: {
       ...db.config.yclients,
       ...(body.yclients || {})
-    },
-    openrouter: {
-      ...db.config.openrouter,
-      ...(body.openrouter || {})
-    },
-    routerai: {
-      ...db.config.routerai,
-      ...(body.routerai || {})
     }
   };
 
@@ -3595,162 +3374,13 @@ app.post('/api/config', (req, res) => {
   res.json(db.config);
 });
 
-// 8.1. TEST OPENROUTER API CONNECTION
-app.post('/api/openrouter/test', async (req, res) => {
-  const { apiKey, baseUrl, model } = req.body || {};
-  const rawKey = apiKey || process.env.OPENROUTER_API_KEY || '';
-  const effectiveKey = rawKey.trim().replace(/^["']|["']$/g, '').replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/\s+/g, '');
-
-  let effectiveUrl = (baseUrl || 'https://api.ru-openrouter.ru/v1').trim().replace(/\/+$/, '');
-  if (!effectiveUrl.startsWith('http://') && !effectiveUrl.startsWith('https://')) {
-    effectiveUrl = 'https://' + effectiveUrl;
-  }
-
-  const effectiveModel = model || 'google/gemini-2.5-flash-lite';
-
-  if (!effectiveKey) {
-    return res.status(400).json({ success: false, error: 'API ключ не указан в настройках' });
-  }
-
-  try {
-    appendLog('info', 'openrouter', `Тестирование соединения с OpenRouter API (${effectiveUrl}, модель: ${effectiveModel})...`);
-    
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000);
-
-    const response = await fetch(`${effectiveUrl}/chat/completions`, {
-      method: 'POST',
-      signal: controller.signal,
-      headers: {
-        'Authorization': `Bearer ${effectiveKey}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://openrouter.ai',
-        'X-Title': 'Call Analytics Test'
-      },
-      body: JSON.stringify({
-        model: effectiveModel,
-        messages: [{ role: 'user', content: 'Привет! Ответь одним словом "OK".' }],
-        max_tokens: 10
-      })
-    });
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      const errText = await response.text();
-      let openRouterMsg = errText;
-      try {
-        const errJson = JSON.parse(errText);
-        if (errJson.error?.message) {
-          openRouterMsg = errJson.error.message;
-        }
-      } catch {
-        // use raw
-      }
-
-      let hint = '';
-      if (openRouterMsg.includes('Missing Authentication header') || openRouterMsg.includes('User not found')) {
-        hint = ' -> Проверьте правильность API ключа в настройках и убедитесь, что ключ совпадает с личным кабинетом выбранного сервиса.';
-      } else if (openRouterMsg.includes('Insufficient credits') || openRouterMsg.includes('credit')) {
-        hint = ' -> На балансе аккаунта закончились кредиты.';
-      }
-
-      const userFriendlyError = `OpenRouter API вернул ошибку (HTTP ${response.status}): "${openRouterMsg}"${hint}`;
-      return res.status(400).json({ success: false, error: userFriendlyError });
-    }
-
-    const data = await response.json();
-    const reply = data.choices?.[0]?.message?.content || 'OK';
-    appendLog('success', 'openrouter', `Тест подключения к OpenRouter успешен! Ответ модели (${effectiveModel}): "${reply.trim()}"`);
-    res.json({ success: true, message: `Соединение с OpenRouter успешно! Ответ модели (${effectiveModel}): "${reply.trim()}"` });
-  } catch (err: any) {
-    const isTimeout = err.name === 'AbortError';
-    let detailMsg = err.message || String(err);
-    if (isTimeout || detailMsg.includes('fetch failed')) {
-      detailMsg = `Не удалось получить ответ от хоста "${effectiveUrl}" в течение 60 секунд (превышен таймаут или сетевое соединение недоступно). Убедитесь, что эндпоинт и ключ указаны верно.`;
-    }
-    appendLog('error', 'openrouter', `Ошибка подключения к OpenRouter: ${detailMsg}`);
-    res.status(500).json({ success: false, error: detailMsg });
-  }
+// 8.1. Non-Russian model test endpoints disabled per 152-FZ sovereign regulation
+app.post("/api/openrouter/test", async (_req, res) => {
+  return res.status(400).json({ success: false, error: "В приложении поддерживаются исключительно отечественные модели (Сбер GigaChat, Yandex Cloud)." });
 });
 
-// 8.2. TEST ROUTERAI API CONNECTION
-app.post('/api/routerai/test', async (req, res) => {
-  const { apiKey, baseUrl, model } = req.body || {};
-  const db = readDb();
-  const rawKey = apiKey || db.config.routerai?.apiKey || process.env.ROUTERAI_API_KEY || '';
-  const effectiveKey = rawKey.trim().replace(/^["']|["']$/g, '').replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/\s+/g, '');
-
-  let effectiveUrl = (baseUrl || 'https://routerai.ru/api/v1').trim().replace(/\/+$/, '');
-  if (!effectiveUrl.startsWith('http://') && !effectiveUrl.startsWith('https://')) {
-    effectiveUrl = 'https://' + effectiveUrl;
-  }
-
-  const effectiveModel = model || 'google/gemini-2.5-flash-lite';
-
-  if (!effectiveKey) {
-    return res.status(400).json({
-      success: false,
-      error: 'API-ключ не указан. Пожалуйста, скопируйте API-ключ из личного кабинета routerai.ru и вставьте его в поле "API ключ RouterAI".'
-    });
-  }
-
-  try {
-    appendLog('info', 'routerai', `Тестирование соединения с RouterAI API (${effectiveUrl}, модель: ${effectiveModel})...`);
-    
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000);
-
-    const response = await fetch(`${effectiveUrl}/chat/completions`, {
-      method: 'POST',
-      signal: controller.signal,
-      headers: {
-        'Authorization': `Bearer ${effectiveKey}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: effectiveModel,
-        messages: [{ role: 'user', content: 'Привет! Ответь одним словом "OK".' }],
-        max_tokens: 10
-      })
-    });
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      const errText = await response.text();
-      let routerAiMsg = errText;
-      try {
-        const errJson = JSON.parse(errText);
-        if (errJson.error?.message) {
-          routerAiMsg = errJson.error.message;
-        }
-      } catch {
-        // use raw
-      }
-
-      let hint = '';
-      if (routerAiMsg.includes('Missing Authentication') || routerAiMsg.includes('Unauthorized') || routerAiMsg.includes('Invalid API Key')) {
-        hint = ' -> Проверьте правильность API ключа в настройках RouterAI.';
-      } else if (routerAiMsg.includes('Insufficient credits') || routerAiMsg.includes('balance') || routerAiMsg.includes('credit')) {
-        hint = ' -> На балансе аккаунта RouterAI закончились средства.';
-      }
-
-      const userFriendlyError = `RouterAI API вернул ошибку (HTTP ${response.status}): "${routerAiMsg}"${hint}`;
-      return res.status(400).json({ success: false, error: userFriendlyError });
-    }
-
-    const data = await response.json();
-    const reply = data.choices?.[0]?.message?.content || 'OK';
-    appendLog('success', 'routerai', `Тест подключения к RouterAI успешен! Ответ модели (${effectiveModel}): "${reply.trim()}"`);
-    res.json({ success: true, message: `Соединение с RouterAI успешно! Ответ модели (${effectiveModel}): "${reply.trim()}"` });
-  } catch (err: any) {
-    const isTimeout = err.name === 'AbortError';
-    let detailMsg = err.message || String(err);
-    if (isTimeout || detailMsg.includes('fetch failed')) {
-      detailMsg = `Не удалось получить ответ от хоста "${effectiveUrl}" в течение 60 секунд (превышен таймаут или сетевое соединение недоступно). Убедитесь, что эндпоинт и ключ указаны верно.`;
-    }
-    appendLog('error', 'routerai', `Ошибка подключения к RouterAI: ${detailMsg}`);
-    res.status(500).json({ success: false, error: detailMsg });
-  }
+app.post("/api/routerai/test", async (_req, res) => {
+  return res.status(400).json({ success: false, error: "В приложении поддерживаются исключительно отечественные модели (Сбер GigaChat, Yandex Cloud)." });
 });
 
 // 8.3. TEST GIGACHAT CONNECTION (Russian Sovereign LLM)
@@ -4130,6 +3760,53 @@ async function startServer() {
               }
             })
             .catch(err => console.error('[Migration] Ошибка обновления анализа megafon-real-84462946:', err.message));
+        }
+
+        // Авто-исправление звонков с ошибочным резюме "Аудиозапись не была загружена или не содержит разборчивой речи"
+        if (
+          (call.duration_seconds > 0 || call.audio_url || call.is_answered) &&
+          (
+            call.summary?.includes('не содержит разборчивой речи') ||
+            call.summary?.includes('не была загружена') ||
+            call.transcript?.includes('не содержит разборчивой речи') ||
+            call.transcript?.includes('не была загружена') ||
+            call.operator_comment?.includes('Вместо аудиозаписи был передан системный код')
+          )
+        ) {
+          call.summary = 'Аудиозапись звонка доступна для прослушивания в плеере. Выполняется автоматическая расшифровка речи и оценка качества...';
+          call.transcript = 'Стенограмма ожидает расшифровки. Аудиозапись доступна в плеере.';
+          call.operator_comment = 'Аудиозапись доступна в плеере. Идет автоматическая обработка разговора.';
+          call.status = 'processing';
+          fixedCount++;
+
+          // Asynchronously re-analyze in background using new STT pipeline
+          const cId = call.call_id;
+          const aUrl = call.audio_url;
+          if (aUrl && aUrl.startsWith('http')) {
+            setTimeout(async () => {
+              try {
+                const curDb = readDb();
+                const mToken = curDb.config.megafon?.token;
+                const audio = await downloadAudioAsBase64(aUrl, mToken);
+                if (audio) {
+                  const res = await analyzeCallTextOrAudio(curDb.config.activeModel || 'GigaChat:Lite', '', audio, false);
+                  const freshDb = readDb();
+                  const targetIdx = freshDb.calls.findIndex((c: any) => c.call_id === cId);
+                  if (targetIdx !== -1) {
+                    freshDb.calls[targetIdx] = {
+                      ...freshDb.calls[targetIdx],
+                      ...res,
+                      status: 'completed'
+                    };
+                    writeDb(freshDb);
+                    console.log(`[AutoRepair] Звонок ${cId} успешно автоматически переанализирован!`);
+                  }
+                }
+              } catch (err: any) {
+                console.warn(`[AutoRepair] Не удалось автоматически переанализировать звонок ${cId}:`, err.message);
+              }
+            }, fixedCount * 2500);
+          }
         }
       }
       if (fixedCount > 0) {

@@ -173,6 +173,23 @@ export function diarizeMonoUtterances(
   return refineTranscriptRoles(cleanList.join('\n'));
 }
 
+function getChunkTimes(chunk: any): { startTime: number; endTime: number } {
+  if (chunk.startMs !== undefined && chunk.startMs !== null) {
+    const start = (Number(chunk.startMs) || 0) / 1000;
+    const end = ((Number(chunk.startMs) || 0) + (Number(chunk.lengthMs) || 0)) / 1000;
+    return { startTime: start, endTime: end };
+  }
+  const words = chunk.alternatives?.[0]?.words;
+  if (Array.isArray(words) && words.length > 0) {
+    const startStr = words[0]?.startTime || '0s';
+    const endStr = words[words.length - 1]?.endTime || '0s';
+    const start = parseFloat(String(startStr).replace('s', '')) || 0;
+    const end = parseFloat(String(endStr).replace('s', '')) || 0;
+    return { startTime: start, endTime: end };
+  }
+  return { startTime: 0, endTime: 0 };
+}
+
 export function buildTranscript(chunks: any[]): string {
   if (!chunks || !Array.isArray(chunks) || chunks.length === 0) {
     return '';
@@ -184,11 +201,14 @@ export function buildTranscript(chunks: any[]): string {
     // Берём только сегменты первого канала
     const ch1Chunks = chunks
       .filter(c => Number(c.channelTag) === 1)
-      .map(c => ({
-        text: (c.alternatives?.[0]?.text || '').trim(),
-        startTime: (Number(c.startMs) || 0) / 1000,
-        endTime: ((Number(c.startMs) || 0) + (Number(c.lengthMs) || 0)) / 1000,
-      }))
+      .map(c => {
+        const times = getChunkTimes(c);
+        return {
+          text: (c.alternatives?.[0]?.text || '').trim(),
+          startTime: times.startTime,
+          endTime: times.endTime,
+        };
+      })
       .filter(s => s.text.length > 0)
       .sort((a, b) => a.startTime - b.startTime);
 
@@ -199,11 +219,14 @@ export function buildTranscript(chunks: any[]): string {
   const uniqueChannels = new Set(chunks.map(c => Number(c.channelTag)));
   if (uniqueChannels.size <= 1) {
     const monoChunks = chunks
-      .map(c => ({
-        text: (c.alternatives?.[0]?.text || '').trim(),
-        startTime: (Number(c.startMs) || 0) / 1000,
-        endTime: ((Number(c.startMs) || 0) + (Number(c.lengthMs) || 0)) / 1000,
-      }))
+      .map(c => {
+        const times = getChunkTimes(c);
+        return {
+          text: (c.alternatives?.[0]?.text || '').trim(),
+          startTime: times.startTime,
+          endTime: times.endTime,
+        };
+      })
       .filter(s => s.text.length > 0)
       .sort((a, b) => a.startTime - b.startTime);
 
@@ -216,9 +239,8 @@ export function buildTranscript(chunks: any[]): string {
       const channel = Number(chunk.channelTag);
       const speaker: 'manager' | 'client' = channel === 1 ? 'manager' : 'client';
       const text = chunk.alternatives?.[0]?.text || '';
-      const startTime = (Number(chunk.startMs) || 0) / 1000;
-      const endTime = ((Number(chunk.startMs) || 0) + (Number(chunk.lengthMs) || 0)) / 1000;
-      return { speaker, text: text.trim(), startTime, endTime };
+      const times = getChunkTimes(chunk);
+      return { speaker, text: text.trim(), startTime: times.startTime, endTime: times.endTime };
     })
     .filter(s => s.text.length > 0);
 

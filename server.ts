@@ -378,20 +378,22 @@ function sanitizeAnalysisResults(parsed: Partial<CallRecord>, transcriptInput?: 
     }
   }
 
-  // Detect hallucinated order/service conversation when transcript is actually an auto-responder or very short non-dialogue
+  // Detect hallucinated order/service conversation ONLY when transcript is actually an explicit auto-responder and has no dialog
   const cleanT = (parsed.transcript || transcriptInput || '').trim();
   const cleanTLower = cleanT.toLowerCase();
   
-  // Check if transcript contains a real full dialog between 2 humans:
-  const hasHumanDialog = (cleanTLower.includes('клиент:') || cleanTLower.includes('покупатель:') || cleanTLower.includes('абонент:')) &&
+  // Check if transcript contains dialogue:
+  const hasHumanDialog = (cleanTLower.includes('клиент:') || cleanTLower.includes('покупатель:') || cleanTLower.includes('абонент:')) ||
                          (cleanTLower.includes('менеджер:') || cleanTLower.includes('администратор:') || cleanTLower.includes('оператор:'));
 
-  // Detect suspicious hallucination markers in summary when there is no real multi-speaker human dialogue or transcript is short
-  const hasHallucinationMarkers = summary.includes('заказ') || summary.includes('клиент обратился') || 
-                                  summary.includes('менеджер сообщ') || summary.includes('уточнить возможность') || 
-                                  summary.includes('доставка') || summary.includes('статус заказа') || summary.includes('наличие товара');
+  const isExplicitAnsweringMachine = 
+    rawTranscript.includes('оставьте сообщение') ||
+    rawTranscript.includes('абонент не может ответить') ||
+    rawTranscript.includes('абонент временно недоступен') ||
+    rawTranscript.includes('привет, линия занята') ||
+    (rawTranscript.includes('номер занят') && cleanT.length < 80);
 
-  if (isAutoResponder || (!hasHumanDialog && (cleanT.length < 280 || hasHallucinationMarkers))) {
+  if (isExplicitAnsweringMachine && cleanT.length < 120 && !hasHumanDialog) {
     let actualText = parsed.transcript && parsed.transcript !== 'Аудиозапись телефонного разговора.'
       ? parsed.transcript
       : (transcriptInput || 'Привет, линия занята');
@@ -674,15 +676,27 @@ async function analyzeCallTextOrAudio(
   audioDownloadFailed: boolean = false
 ): Promise<Partial<CallRecord>> {
   let cleanTranscript = (transcriptInput || '').trim();
-  if (
+  const isInvalidOrErrorTranscript =
+    !cleanTranscript ||
     cleanTranscript === 'Загрузка аудиозаписи...' ||
     cleanTranscript === 'Обработка аудио...' ||
     cleanTranscript.startsWith('Аудиозапись не была') ||
     cleanTranscript.startsWith('Стенограмма отсутствует') ||
     cleanTranscript.includes('не содержит разборчивой речи') ||
     cleanTranscript.includes('Стенограмма ожидает') ||
-    cleanTranscript.includes('не была загружена')
-  ) {
+    cleanTranscript.includes('не была загружена') ||
+    cleanTranscript.includes('исчерпан лимит') ||
+    cleanTranscript.includes('лимит токенов') ||
+    cleanTranscript.includes('превышена квота') ||
+    cleanTranscript.includes('resource_exhausted') ||
+    cleanTranscript.includes('rate-limits') ||
+    cleanTranscript.includes('Gemini') ||
+    cleanTranscript.includes('Ошибка:') ||
+    cleanTranscript.includes('отсутствует диалог') ||
+    cleanTranscript.includes('Запись разговора и стенограмма отсутствуют') ||
+    cleanTranscript.includes('Разговор не состоялся');
+
+  if (isInvalidOrErrorTranscript) {
     cleanTranscript = '';
   }
 
@@ -3140,15 +3154,28 @@ async function performCallReanalysis(callId: string): Promise<any> {
     return call;
   }
 
-  const existingTranscript = (call.transcript &&
-    call.transcript !== 'Загрузка аудиозаписи...' &&
-    call.transcript !== 'Обработка аудио...' &&
-    !call.transcript.startsWith('Аудиозапись не была') &&
-    !call.transcript.startsWith('Стенограмма отсутствует') &&
-    !call.transcript.includes('не содержит разборчивой речи') &&
-    !call.transcript.includes('Стенограмма ожидает') &&
-    !call.transcript.includes('не была загружена') &&
-    !call.transcript.includes('предоставьте аудиозапись')) ? call.transcript : '';
+  const isErroneousTranscript = !call.transcript ||
+    call.transcript === 'Загрузка аудиозаписи...' ||
+    call.transcript === 'Обработка аудио...' ||
+    call.transcript.startsWith('Аудиозапись не была') ||
+    call.transcript.startsWith('Стенограмма отсутствует') ||
+    call.transcript.includes('не содержит разборчивой речи') ||
+    call.transcript.includes('Стенограмма ожидает') ||
+    call.transcript.includes('не была загружена') ||
+    call.transcript.includes('предоставьте аудиозапись') ||
+    call.transcript.includes('исчерпан лимит') ||
+    call.transcript.includes('лимит токенов') ||
+    call.transcript.includes('превышена квота') ||
+    call.transcript.includes('resource_exhausted') ||
+    call.transcript.includes('rate-limits') ||
+    call.transcript.includes('Gemini') ||
+    call.transcript.includes('Ошибка:') ||
+    call.transcript.includes('отсутствует диалог') ||
+    call.transcript.includes('Автоответчик:') ||
+    call.transcript.includes('линия занята');
+
+  // If the call has audio, always prioritize fresh transcription from audio with Yandex SpeechKit!
+  const existingTranscript = (!isErroneousTranscript && !call.audio_url) ? call.transcript : '';
 
   const selectedModel = db.config.activeModel || 'GigaChat:Lite';
 
@@ -3753,15 +3780,22 @@ async function startServer() {
             .catch(err => console.error('[Migration] Ошибка обновления анализа megafon-real-84462946:', err.message));
         }
 
-        // Авто-исправление звонков с ошибочным резюме "Аудиозапись не была загружена или не содержит разборчивой речи"
+        // Авто-исправление звонков с ошибками токенов, ложным автоответчиком или placeholder-текстом
         if (
           (call.duration_seconds > 0 || call.audio_url || call.is_answered) &&
           (
             call.summary?.includes('не содержит разборчивой речи') ||
             call.summary?.includes('не была загружена') ||
+            call.summary?.includes('Анализ звонка заблокирован') ||
             call.transcript?.includes('не содержит разборчивой речи') ||
             call.transcript?.includes('не была загружена') ||
-            call.operator_comment?.includes('Вместо аудиозаписи был передан системный код')
+            call.transcript?.includes('исчерпан лимит') ||
+            call.transcript?.includes('Gemini') ||
+            call.transcript?.includes('Ошибка:') ||
+            call.transcript?.includes('лимит токенов') ||
+            call.operator_comment?.includes('Вместо аудиозаписи был передан системный код') ||
+            call.operator_comment?.includes('Сработал автоответчик или короткое соединение') ||
+            call.operator_comment?.includes('по технической причине')
           )
         ) {
           call.summary = 'Аудиозапись звонка доступна для прослушивания в плеере. Выполняется автоматическая расшифровка речи и оценка качества...';

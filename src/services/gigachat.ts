@@ -411,14 +411,16 @@ function parseGigaChatJson(text: string): AnalysisResult {
     operator_score: score,
     operator_comment: parsed.operator_comment && parsed.operator_comment.trim().length > 0
       ? parsed.operator_comment
-      : (isAutoAnswer ? 'Сработал автоответчик или короткое соединение.' : 'Администратор вежливо обработал обращение, соблюдая регламент салона «Лик 28».'),
+      : (rawOutcome === 'автоответчик' && (!formattedTranscript || formattedTranscript.length < 40)
+          ? 'Сработал автоответчик или короткое соединение.'
+          : 'Администратор вежливо обработал обращение, соблюдая регламент салона «Лик 28».'),
     recommendations: parsed.recommendations || 'Соблюдать стандарты сервиса салона «Лик 28».',
   };
 }
 
 function generateLocalFallbackAnalysis(transcript: string, model: GigaChatModel): AnalysisResult {
   const lower = (transcript || '').toLowerCase();
-  const isAuto = lower.includes('автоответчик') || lower.includes('не может ответить') || lower.includes('занят') || lower.length < 50;
+  const isAuto = lower.includes('автоответчик') || lower.includes('не может ответить') || lower.includes('номер занят') || (lower.length > 0 && lower.length < 20 && !lower.includes('салон') && !lower.includes('здравствуйте'));
   
   if (isAuto) {
     return {

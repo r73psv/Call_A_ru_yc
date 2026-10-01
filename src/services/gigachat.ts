@@ -49,14 +49,21 @@ export const SYSTEM_PROMPT = `Ты — ведущий эксперт контр�
    - booking_status: строго дублирует статус записи ("согласие"|"отказ"|"консультация"|"не применимо").
    - client_issue: конкретная суть запроса клиента (например: "Запись на оформление челки к мастеру Надежде").
 
-5. ОЦЕНКА ОПЕРАТОРА:
-   - Для состоявшегося диалога с клиентом обязательно выставить operator_score (число от 1 до 10) и краткий содержательный комментарий operator_comment.
-   - Если в диалоге только автоответчик или сброс — вернуть operator_score: null.
+5. ОЦЕНКА ОПЕРАТОРА (operator_score):
+   - ВНИМАНИЕ: СТРОЖАЙШИЙ ЗАПРЕТ ФАНТАЗИРОВАНИЯ И ВЫСТАВЛЕНИЯ ОЦЕНОК ПРИ НЕСОСТОЯВШИХСЯ РАЗГОВОРАХ!
+   - Если разговор не состоялся, сработал автоответчик, автоинформатор, голосовая почта, робот оператора связи, линия занята, гудки, тишина или абонент не ответил:
+     * operator_score ОБЯЗАН БЫТЬ СТРОГО null (НЕ число, НЕ 0, а именно null)! КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО выдумывать диалог и ставить оценку!
+     * operator_comment: "Разговор не состоялся (сработал автоответчик/автоинформатор или линия была недоступна)."
+     * booking_status: "не применимо"
+     * call_outcome: "автоответчик"
+     * recommendations: "Повторить попытку дозвона клиенту в рабочее время салона «Лик 28»."
+     * transcript_summary: "Разговор не состоялся: сработал автоответчик или автоинформатор. Запись не оформлена."
+   - Оценка оператора (число от 1 до 10) и содержательный комментарий выставляются ТОЛЬКО если состоялся РЕАЛЬНЫЙ диалог между живым клиентом и администратором салона.
 
 6. РЕГЛАМЕНТ САЛОНА:
    - Официальное название салона: «Лик 28».
    - Не снижать оценку за приветствие с названием «Лик 28».
-   - Не выдумывать факты, которых нет в разговоре.
+   - Категорически запрещено выдумывать факты, фразы или обстоятельства, которых нет в стенограмме разговора.
 
 Формат ответа (JSON):
 {
@@ -73,7 +80,7 @@ export const SYSTEM_PROMPT = `Ты — ведущий эксперт контр�
     "client_issue": "суть обращения"
   },
   "operator_score": 1-10 | null,
-  "operator_comment": "комментарий к оценке администратора",
+  "operator_comment": "комментарий к оценке администратора (или фиксация автоответчика)",
   "recommendations": "рекомендации администратору"
 }`;
 
@@ -362,65 +369,139 @@ function parseGigaChatJson(text: string): AnalysisResult {
   }
 
   const parsed = JSON.parse(clean);
-  const isAutoAnswer = parsed.key_facts?.call_outcome === 'автоответчик' || parsed.booking_status === 'не применимо';
-  const score = typeof parsed.operator_score === 'number'
-    ? parsed.operator_score
-    : (isAutoAnswer ? null : 9);
-
-  // Normalize booking_status ('согласие' | 'отказ' | 'консультация' | 'не применимо')
-  let bookingStatus: string = String(parsed.booking_status || parsed.key_facts?.booking_status || '').toLowerCase().trim();
-  const rawOutcome: string = String(parsed.key_facts?.call_outcome || '').toLowerCase().trim();
-
-  if (!bookingStatus || !['согласие', 'отказ', 'консультация', 'не применимо'].includes(bookingStatus)) {
-    if (bookingStatus.includes('соглас') || rawOutcome === 'запись' || rawOutcome === 'успешно') {
-      bookingStatus = 'согласие';
-    } else if (bookingStatus.includes('отказ') || rawOutcome === 'отказ') {
-      bookingStatus = 'отказ';
-    } else if (rawOutcome === 'автоответчик' || isAutoAnswer) {
-      bookingStatus = 'не применимо';
-    } else {
-      bookingStatus = 'консультация';
-    }
-  }
-
-  // Ensure call_outcome is consistent with booking_status
-  let outcome = rawOutcome || 'консультация';
-  if (bookingStatus === 'согласие' && outcome !== 'запись') {
-    outcome = 'запись';
-  } else if (bookingStatus === 'отказ' && outcome !== 'отказ') {
-    outcome = 'отказ';
-  }
-
   const formattedTranscript = typeof parsed.formatted_transcript === 'string' && parsed.formatted_transcript.trim().length > 0
     ? parsed.formatted_transcript.trim()
     : undefined;
 
+  const combinedText = (
+    (formattedTranscript || '') + ' ' +
+    (parsed.transcript_summary || '') + ' ' +
+    (parsed.summary || '') + ' ' +
+    (parsed.key_facts?.client_issue || '') + ' ' +
+    (parsed.operator_comment || '')
+  ).toLowerCase();
+
+  // Strict detection of auto-attendant, auto-informer, voicemail, silence or failed connection
+  const isAutoOrFailed = 
+    parsed.key_facts?.call_outcome === 'автоответчик' ||
+    parsed.key_facts?.call_outcome === 'не состоялся' ||
+    parsed.booking_status === 'не применимо' ||
+    combinedText.includes('автоответчик') ||
+    combinedText.includes('автоинформатор') ||
+    combinedText.includes('голосовой помощник') ||
+    combinedText.includes('голосовая почта') ||
+    combinedText.includes('оставьте сообщение') ||
+    combinedText.includes('после сигнала') ||
+    combinedText.includes('не может ответить') ||
+    combinedText.includes('абонент временно недоступен') ||
+    combinedText.includes('абонент занят') ||
+    combinedText.includes('линия занята') ||
+    combinedText.includes('набранный вами номер') ||
+    combinedText.includes('пожалуйста, перезвоните') ||
+    combinedText.includes('все операторы заняты') ||
+    combinedText.includes('переадресация вызова') ||
+    combinedText.includes('разговор не состоялся') ||
+    combinedText.includes('звонок не состоялся') ||
+    combinedText.includes('не ответил') ||
+    combinedText.includes('пропущенный');
+
+  // If auto-responder / informer detected, FORBID fantasy score and FORCE score = null
+  let score: number | null = null;
+  if (!isAutoOrFailed && typeof parsed.operator_score === 'number' && !isNaN(parsed.operator_score)) {
+    score = Math.max(1, Math.min(10, Math.round(parsed.operator_score)));
+  }
+
+  // Normalize booking_status ('согласие' | 'отказ' | 'консультация' | 'не применимо')
+  let bookingStatus: string = isAutoOrFailed 
+    ? 'не применимо' 
+    : String(parsed.booking_status || parsed.key_facts?.booking_status || '').toLowerCase().trim();
+  const rawOutcome: string = String(parsed.key_facts?.call_outcome || '').toLowerCase().trim();
+
+  if (!isAutoOrFailed) {
+    if (!bookingStatus || !['согласие', 'отказ', 'консультация', 'не применимо'].includes(bookingStatus)) {
+      if (bookingStatus.includes('соглас') || rawOutcome === 'запись' || rawOutcome === 'успешно') {
+        bookingStatus = 'согласие';
+      } else if (bookingStatus.includes('отказ') || rawOutcome === 'отказ') {
+        bookingStatus = 'отказ';
+      } else {
+        bookingStatus = 'консультация';
+      }
+    }
+  }
+
+  // Ensure call_outcome is consistent with booking_status and auto-responder detection
+  let outcome = isAutoOrFailed ? 'автоответчик' : (rawOutcome || 'консультация');
+  if (!isAutoOrFailed) {
+    if (bookingStatus === 'согласие' && outcome !== 'запись') {
+      outcome = 'запись';
+    } else if (bookingStatus === 'отказ' && outcome !== 'отказ') {
+      outcome = 'отказ';
+    }
+  }
+
+  const summary = isAutoOrFailed
+    ? 'Разговор не состоялся: сработал автоответчик, автоинформатор или линия была недоступна. Запись не оформлена.'
+    : (parsed.transcript_summary || parsed.summary || 'Краткое содержание диалога с результатом обращения.');
+
+  const comment = isAutoOrFailed
+    ? 'Разговор не состоялся: зафиксирован автоответчик или автоинформатор (оценка оператора не выставляется).'
+    : (parsed.operator_comment && parsed.operator_comment.trim().length > 0
+        ? parsed.operator_comment
+        : 'Администратор вежливо обработал обращение, соблюдая регламент салона «Лик 28».');
+
+  const recommendations = isAutoOrFailed
+    ? 'Повторить попытку дозвона клиенту в рабочее время салона «Лик 28».'
+    : (parsed.recommendations || 'Соблюдать стандарты сервиса салона «Лик 28».');
+
   return {
-    transcript_summary: parsed.transcript_summary || parsed.summary || 'Краткое содержание диалога с результатом обращения.',
+    transcript_summary: summary,
     booking_status: bookingStatus,
     formatted_transcript: formattedTranscript,
     key_facts: {
-      is_dispute: Boolean(parsed.key_facts?.is_dispute),
-      dispute_reason: parsed.key_facts?.dispute_reason || null,
-      tone_client: parsed.key_facts?.tone_client || 'нейтральный',
-      tone_manager: parsed.key_facts?.tone_manager || 'нейтральный',
+      is_dispute: isAutoOrFailed ? false : Boolean(parsed.key_facts?.is_dispute),
+      dispute_reason: isAutoOrFailed ? null : (parsed.key_facts?.dispute_reason || null),
+      tone_client: isAutoOrFailed ? 'нейтральный' : (parsed.key_facts?.tone_client || 'нейтральный'),
+      tone_manager: isAutoOrFailed ? 'нейтральный' : (parsed.key_facts?.tone_manager || 'нейтральный'),
       call_outcome: outcome,
       booking_status: bookingStatus,
-      client_issue: parsed.key_facts?.client_issue || 'Обращение в салон «Лик 28»',
+      client_issue: isAutoOrFailed ? 'Несостоявшийся вызов / автоответчик' : (parsed.key_facts?.client_issue || 'Обращение в салон «Лик 28»'),
     },
     operator_score: score,
-    operator_comment: parsed.operator_comment && parsed.operator_comment.trim().length > 0
-      ? parsed.operator_comment
-      : (rawOutcome === 'автоответчик' && (!formattedTranscript || formattedTranscript.length < 40)
-          ? 'Сработал автоответчик или короткое соединение.'
-          : 'Администратор вежливо обработал обращение, соблюдая регламент салона «Лик 28».'),
-    recommendations: parsed.recommendations || 'Соблюдать стандарты сервиса салона «Лик 28».',
+    operator_comment: comment,
+    recommendations: recommendations,
   };
 }
 
 function generateLocalFallbackAnalysis(transcript: string, model: GigaChatModel): AnalysisResult {
-  const lower = (transcript || '').toLowerCase();
-  const isAuto = lower.includes('автоответчик') || lower.includes('не может ответить') || lower.includes('номер занят') || (lower.length > 0 && lower.length < 20 && !lower.includes('салон') && !lower.includes('здравствуйте'));
+  const lower = (transcript || '').toLowerCase().trim();
+
+  // If transcript is empty or placeholder awaiting transcription
+  if (!lower || lower.includes('стенограмма ожидает') || lower.includes('запись разговора и стенограмма отсутствуют')) {
+    return {
+      transcript_summary: 'Аудиозапись ожидает расшифровки речи.',
+      booking_status: 'не применимо',
+      formatted_transcript: transcript || '',
+      key_facts: {
+        is_dispute: false,
+        dispute_reason: null,
+        tone_client: 'нейтральный',
+        tone_manager: 'нейтральный',
+        call_outcome: 'ожидает расшифровки',
+        booking_status: 'не применимо',
+        client_issue: 'Звонок ожидает расшифровки речи',
+      },
+      operator_score: null,
+      operator_comment: 'Оценка оператора ожидает распознавания стенограммы разговора.',
+      recommendations: 'Выполнить расшифровку аудиозаписи разговора.',
+    };
+  }
+
+  const isAuto = lower.includes('автоответчик') ||
+    lower.includes('оставьте сообщение после сигнала') ||
+    lower.includes('абонент временно недоступен') ||
+    lower.includes('не может ответить') ||
+    lower.includes('номер занят') ||
+    lower.includes('переадресация вызова');
   
   if (isAuto) {
     return {
@@ -437,7 +518,7 @@ function generateLocalFallbackAnalysis(transcript: string, model: GigaChatModel)
         client_issue: 'Звонок не состоялся / автоответчик',
       },
       operator_score: null,
-      operator_comment: 'Сработал автоответчик или линия была недоступна.',
+      operator_comment: 'Разговор не состоялся: сработал автоответчик или линия была недоступна.',
       recommendations: 'Повторить звонок клиенту в рабочие часы салона «Лик 28».',
     };
   }

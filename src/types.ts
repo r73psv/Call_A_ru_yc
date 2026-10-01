@@ -41,6 +41,7 @@ export interface SystemCredentials {
   gigachatScope?: string;
   yandexApiKey?: string;
   yandexFolderId?: string;
+  yandexServiceAccountId?: string;
   yandexServiceAccountKeyFile?: string;
   yandexServiceAccountKeyJson?: string;
 

@@ -13,9 +13,9 @@ export interface TranscriptionResult {
 }
 
 /**
- * Sovereign 152-ФЗ Russian speech-to-text pipeline:
- * Exclusively uses Yandex SpeechKit (Yandex Cloud) - verified domestic Russian STT service.
- * In compliance with the regulation: non-Russian models are prohibited.
+ * Исключительно отечественный стек распознавания речи (152-ФЗ РФ):
+ * Основной и единственный сервис: Yandex SpeechKit (Yandex Cloud).
+ * Использование не российских моделей в работе приложения строго запрещено.
  */
 export async function transcribeAudio(
   audioBuffer: Buffer,
@@ -28,16 +28,18 @@ export async function transcribeAudio(
     }
   };
 
+  // 1. Проверка конфигурации авторизации Yandex Cloud SpeechKit
   if (!isYandexAuthConfigured()) {
-    const errorMsg = 'Сервис распознавания речи Yandex SpeechKit не настроен: укажите API-ключ Yandex Cloud в панели управления (раздел «Интеграции & Модели») или установите YC_API_KEY в окружении.';
+    const errorMsg = 'Yandex SpeechKit не настроен (отсутствует authorized_key.json или API-ключ YC_API_KEY). Настройте сервисный аккаунт в панели управления.';
     log('warning', `[STT] ${errorMsg}`);
     return {
       text: '',
       engine: 'none',
-      error: errorMsg
+      error: errorMsg,
     };
   }
 
+  // 2. Распознавание через Yandex SpeechKit
   try {
     log('info', '[STT] Запуск распознавания аудиозаписи через российскую модель Yandex SpeechKit...');
     const skRaw = await transcribeWithRetry(audioBuffer);
@@ -46,24 +48,26 @@ export async function transcribeAudio(
       log('success', `[STT] Речь успешно расшифрована Yandex SpeechKit (${cleaned.length} симв.)`);
       return {
         text: cleaned,
-        engine: 'speechkit'
+        engine: 'speechkit',
       };
     } else {
-      const emptyMsg = 'Yandex SpeechKit вернул пустой результат (в записи отсутствует разборчивая речь или зафиксирована тишина)';
-      log('warning', `[STT] ${emptyMsg}`);
+      const emptyMsg = 'Аудиозапись не содержит разборчивой речи (тишина или звуковой сигнал).';
+      log('info', `[STT] Yandex SpeechKit: ${emptyMsg}`);
       return {
         text: '',
         engine: 'speechkit',
-        error: emptyMsg
+        error: emptyMsg,
       };
     }
   } catch (err: any) {
-    const errorMsg = err.message || String(err);
-    log('error', `[STT] Ошибка распознавания Yandex SpeechKit: ${errorMsg}`);
+    const skError = err.message || String(err);
+    log('error', `[STT] Ошибка распознавания речи Yandex SpeechKit: ${skError}`);
     return {
       text: '',
-      engine: 'speechkit',
-      error: errorMsg
+      engine: 'none',
+      error: `Ошибка Yandex SpeechKit: ${skError}`,
     };
   }
 }
+
+

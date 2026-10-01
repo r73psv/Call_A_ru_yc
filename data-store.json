@@ -696,7 +696,7 @@
       "client_name": "Клиент (1819)",
       "operator_name": "Авдошина Лариса",
       "status": "completed",
-      "type": "outgoing",
+      "type": "incoming",
       "is_answered": true,
       "audio_url": "https://record.cp.megafon.ru/system/media/talk/72040412/4400b014fb1ca1c0ff098f7df4850eb8/",
       "is_demo": false,
@@ -735,7 +735,7 @@
       "client_name": "Клиент (8598)",
       "operator_name": "Авдошина Лариса",
       "status": "completed",
-      "type": "outgoing",
+      "type": "incoming",
       "is_answered": true,
       "audio_url": "https://record.cp.megafon.ru/system/media/talk/72059936/fe63123e7183ae1d1bdba5a5b03325f2/",
       "is_demo": false,
@@ -960,7 +960,7 @@
       "recommendations": [
         "Продолжать придерживаться вежливого и профессионального тона общения."
       ],
-      "operator_score": 10,
+      "operator_score": null,
       "operator_comment": "Оператор вежливо и профессионально ответила на все вопросы клиента, предложила альтернативные варианты и успешно оформила запись.",
       "client_name": "Клиент (0015)",
       "operator_name": "Авдошина Лариса",
@@ -1037,7 +1037,7 @@
       "recommendations": [
         "Проверить работу сервиса SMS-рассылок для онлайн-записи."
       ],
-      "operator_score": 9,
+      "operator_score": null,
       "operator_comment": "Оператор вежлив, быстро решил проблему клиента, уточнил все детали записи. Снижена оценка на 1 балл из-за того, что оператор не предложил проверить настройки телефона или номер, на который не приходят SMS, а сразу перешел к записи по телефону.",
       "client_name": "Клиент (4755)",
       "operator_name": "Авдошина Лариса",
@@ -1817,7 +1817,7 @@
       "recommendations": [
         "Запросить у пользователя текст стенограммы для проведения анализа."
       ],
-      "operator_score": 0,
+      "operator_score": null,
       "operator_comment": "Анализ невозможен из-за отсутствия входных данных.",
       "client_name": "Клиент (6700)",
       "operator_name": "Авдошина Лариса",
@@ -6971,7 +6971,7 @@
         "Проверить корректность номера телефона перед набором.",
         "Повторить попытку вызова позднее, как рекомендует автоответчик."
       ],
-      "operator_score": 0,
+      "operator_score": null,
       "operator_comment": "Разговор отсутствует, это запись автоответчика.",
       "client_name": "Клиент (7924)",
       "operator_name": "Авдошина Лариса",
@@ -7750,7 +7750,7 @@
         "Соблюдать регламент приветствия, избегать лишних слов, чтобы диалог был более профессиональным.",
         "Уточнять у клиента, нужна ли помощь, прежде чем завершать диалог, даже если это ошибочный звонок."
       ],
-      "operator_score": 7,
+      "operator_score": null,
       "operator_comment": "Администратор ответила вежливо, представилась, однако в начале разговора была допущена ошибка в речи («меня кто-то не знает»), что звучит непрофессионально. Разговор прошел быстро, без существенных ошибок.",
       "client_name": "Клиент (7735)",
       "operator_name": "Авдошина Лариса",
@@ -12774,7 +12774,7 @@
       "recommendations": [
         "Рекомендуется как можно скорее перезвонить клиенту для уточнения цели обращения."
       ],
-      "operator_score": 0,
+      "operator_score": null,
       "operator_comment": "Разговор не состоялся. Зафиксирован пропущенный вызов.",
       "client_name": "Клиент (9712)",
       "operator_name": "Авдошина Лариса",
@@ -12812,7 +12812,7 @@
       "recommendations": [
         "Рекомендуется как можно скорее перезвонить клиенту для уточнения цели обращения."
       ],
-      "operator_score": 0,
+      "operator_score": null,
       "operator_comment": "Разговор не состоялся. Зафиксирован пропущенный вызов.",
       "client_name": "Клиент (8241)",
       "operator_name": "Авдошина Лариса",
@@ -13046,7 +13046,7 @@
       "recommendations": [
         "Рекомендуется как можно скорее перезвонить клиенту для уточнения цели обращения."
       ],
-      "operator_score": 0,
+      "operator_score": null,
       "operator_comment": "Разговор не состоялся. Зафиксирован пропущенный вызов.",
       "client_name": "Клиент (9901)",
       "operator_name": "Авдошина Лариса",
@@ -13084,7 +13084,7 @@
       "recommendations": [
         "Рекомендуется как можно скорее перезвонить клиенту для уточнения цели обращения."
       ],
-      "operator_score": 0,
+      "operator_score": null,
       "operator_comment": "Разговор не состоялся. Зафиксирован пропущенный вызов.",
       "client_name": "Клиент (8490)",
       "operator_name": "Авдошина Лариса",
@@ -13159,7 +13159,7 @@
       "recommendations": [
         "Рекомендуется как можно скорее перезвонить клиенту для уточнения цели обращения."
       ],
-      "operator_score": 0,
+      "operator_score": null,
       "operator_comment": "Разговор не состоялся. Зафиксирован пропущенный вызов.",
       "client_name": "Клиент (7677)",
       "operator_name": "Авдошина Лариса",
@@ -13233,7 +13233,7 @@
       "recommendations": [
         "Попробовать связаться с клиентом повторно в другое время."
       ],
-      "operator_score": 0,
+      "operator_score": null,
       "operator_comment": "Абонент не ответил на исходящий вызов сотрудника.",
       "client_name": "Клиент (2223)",
       "operator_name": "Авдошина Лариса",
@@ -13307,7 +13307,7 @@
       "recommendations": [
         "Попробовать связаться с клиентом повторно в другое время."
       ],
-      "operator_score": 0,
+      "operator_score": null,
       "operator_comment": "Абонент не ответил на исходящий вызов сотрудника.",
       "client_name": "Клиент (2223)",
       "operator_name": "Авдошина Лариса",
@@ -13345,7 +13345,7 @@
       "recommendations": [
         "Попробовать связаться с клиентом повторно в другое время."
       ],
-      "operator_score": 0,
+      "operator_score": null,
       "operator_comment": "Абонент не ответил на исходящий вызов сотрудника.",
       "client_name": "Клиент (2223)",
       "operator_name": "Авдошина Лариса",
@@ -13419,7 +13419,7 @@
       "recommendations": [
         "Рекомендуется как можно скорее перезвонить клиенту для уточнения цели обращения."
       ],
-      "operator_score": 0,
+      "operator_score": null,
       "operator_comment": "Разговор не состоялся. Зафиксирован пропущенный вызов.",
       "client_name": "Клиент (8493)",
       "operator_name": "Авдошина Лариса",
@@ -13457,7 +13457,7 @@
       "recommendations": [
         "Рекомендуется как можно скорее перезвонить клиенту для уточнения цели обращения."
       ],
-      "operator_score": 0,
+      "operator_score": null,
       "operator_comment": "Разговор не состоялся. Зафиксирован пропущенный вызов.",
       "client_name": "Клиент (8493)",
       "operator_name": "Авдошина Лариса",
@@ -13604,7 +13604,7 @@
       "recommendations": [
         "Попробовать связаться с клиентом повторно в другое время."
       ],
-      "operator_score": 0,
+      "operator_score": null,
       "operator_comment": "Абонент не ответил на исходящий вызов сотрудника.",
       "client_name": "Клиент (7644)",
       "operator_name": "Авдошина Лариса",
@@ -13642,7 +13642,7 @@
       "recommendations": [
         "Попробовать связаться с клиентом повторно в другое время."
       ],
-      "operator_score": 0,
+      "operator_score": null,
       "operator_comment": "Абонент не ответил на исходящий вызов сотрудника.",
       "client_name": "Клиент (7644)",
       "operator_name": "Авдошина Лариса",
@@ -13752,7 +13752,7 @@
       "recommendations": [
         "Попробовать связаться с клиентом повторно в другое время."
       ],
-      "operator_score": 0,
+      "operator_score": null,
       "operator_comment": "Абонент не ответил на исходящий вызов сотрудника.",
       "client_name": "Клиент (0009)",
       "operator_name": "Авдошина Лариса",
@@ -14085,7 +14085,7 @@
       "recommendations": [
         "Попробовать связаться с клиентом повторно в другое время."
       ],
-      "operator_score": 0,
+      "operator_score": null,
       "operator_comment": "Абонент не ответил на исходящий вызов сотрудника.",
       "client_name": "Клиент (9900)",
       "operator_name": "Авдошина Лариса",
@@ -14123,7 +14123,7 @@
       "recommendations": [
         "Попробовать связаться с клиентом повторно в другое время."
       ],
-      "operator_score": 0,
+      "operator_score": null,
       "operator_comment": "Абонент не ответил на исходящий вызов сотрудника.",
       "client_name": "Клиент (9900)",
       "operator_name": "Авдошина Лариса",
@@ -14425,7 +14425,7 @@
       "recommendations": [
         "Попробовать связаться с клиентом повторно в другое время."
       ],
-      "operator_score": 0,
+      "operator_score": null,
       "operator_comment": "Абонент не ответил на исходящий вызов сотрудника.",
       "client_name": "Клиент (9900)",
       "operator_name": "Авдошина Лариса",
@@ -14463,7 +14463,7 @@
       "recommendations": [
         "Попробовать связаться с клиентом повторно в другое время."
       ],
-      "operator_score": 0,
+      "operator_score": null,
       "operator_comment": "Абонент не ответил на исходящий вызов сотрудника.",
       "client_name": "Клиент (9900)",
       "operator_name": "Авдошина Лариса",
@@ -14786,7 +14786,8 @@
       },
       "tags": [
         "Жалоба"
-      ]
+      ],
+      "type": "incoming"
     },
     {
       "call_id": "megafon-call-89101",
@@ -14821,7 +14822,8 @@
         "prompt_tokens": 443,
         "completion_tokens": 158,
         "total_tokens": 601
-      }
+      },
+      "type": "incoming"
     },
     {
       "call_id": "megafon-real-70430022",
@@ -14843,7 +14845,7 @@
       "recommendations": [
         "Рекомендуется как можно скорее перезвонить клиенту для уточнения цели обращения."
       ],
-      "operator_score": 0,
+      "operator_score": null,
       "operator_comment": "Разговор не состоялся. Зафиксирован пропущенный вызов.",
       "client_name": "Клиент (3382)",
       "operator_name": "Авдошина Лариса",
@@ -14957,7 +14959,7 @@
       "recommendations": [
         "Попробовать связаться с клиентом повторно в другое время."
       ],
-      "operator_score": 0,
+      "operator_score": null,
       "operator_comment": "Абонент не ответил на исходящий вызов сотрудника.",
       "client_name": "Клиент (7771)",
       "operator_name": "Авдошина Лариса",
@@ -15413,7 +15415,7 @@
       "recommendations": [
         "Попробовать связаться с клиентом повторно в другое время."
       ],
-      "operator_score": 0,
+      "operator_score": null,
       "operator_comment": "Абонент не ответил на исходящий вызов сотрудника.",
       "client_name": "Клиент (1191)",
       "operator_name": "Авдошина Лариса",
@@ -15451,7 +15453,7 @@
       "recommendations": [
         "Попробовать связаться с клиентом повторно в другое время."
       ],
-      "operator_score": 0,
+      "operator_score": null,
       "operator_comment": "Абонент не ответил на исходящий вызов сотрудника.",
       "client_name": "Клиент (1191)",
       "operator_name": "Авдошина Лариса",
@@ -15641,7 +15643,7 @@
       "recommendations": [
         "Попробовать связаться с клиентом повторно в другое время."
       ],
-      "operator_score": 0,
+      "operator_score": null,
       "operator_comment": "Абонент не ответил на исходящий вызов сотрудника.",
       "client_name": "Клиент (6500)",
       "operator_name": "Авдошина Лариса",
@@ -16059,7 +16061,7 @@
       "recommendations": [
         "Попробовать связаться с клиентом повторно в другое время."
       ],
-      "operator_score": 0,
+      "operator_score": null,
       "operator_comment": "Абонент не ответил на исходящий вызов сотрудника.",
       "client_name": "Клиент (1862)",
       "operator_name": "Авдошина Лариса",
@@ -16097,7 +16099,7 @@
       "recommendations": [
         "Рекомендуется как можно скорее перезвонить клиенту для уточнения цели обращения."
       ],
-      "operator_score": 0,
+      "operator_score": null,
       "operator_comment": "Разговор не состоялся. Зафиксирован пропущенный вызов.",
       "client_name": "Клиент (1862)",
       "operator_name": "Авдошина Лариса",
@@ -16173,7 +16175,7 @@
       "recommendations": [
         "Попробовать связаться с клиентом повторно в другое время."
       ],
-      "operator_score": 0,
+      "operator_score": null,
       "operator_comment": "Абонент не ответил на исходящий вызов сотрудника.",
       "client_name": "Клиент (1933)",
       "operator_name": "Авдошина Лариса",
@@ -16249,7 +16251,7 @@
       "recommendations": [
         "Рекомендуется как можно скорее перезвонить клиенту для уточнения цели обращения."
       ],
-      "operator_score": 0,
+      "operator_score": null,
       "operator_comment": "Разговор не состоялся. Зафиксирован пропущенный вызов.",
       "client_name": "Клиент (6633)",
       "operator_name": "Авдошина Лариса",
@@ -16287,7 +16289,7 @@
       "recommendations": [
         "Рекомендуется как можно скорее перезвонить клиенту для уточнения цели обращения."
       ],
-      "operator_score": 0,
+      "operator_score": null,
       "operator_comment": "Разговор не состоялся. Зафиксирован пропущенный вызов.",
       "client_name": "Клиент (6633)",
       "operator_name": "Авдошина Лариса",
@@ -16401,7 +16403,7 @@
       "recommendations": [
         "Рекомендуется как можно скорее перезвонить клиенту для уточнения цели обращения."
       ],
-      "operator_score": 0,
+      "operator_score": null,
       "operator_comment": "Разговор не состоялся. Зафиксирован пропущенный вызов.",
       "client_name": "Клиент (6246)",
       "operator_name": "Авдошина Лариса",
@@ -17553,9 +17555,9 @@
       "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6IjB4NzdBNG9PRWdCOUQxU1pNYkpadzkzODdTT0E0Z1k5R3RHSGhQZUUwX0UiLCJ0eXAiOiJKV1QifQ.eyJqdGkiOiJlODNmMTljMy0xMjhjLTQ0ZjQtYTFhMy1iMmRjY2E4YzUzZjciLCJzaWQiOiJlMGNkY2YyMi03YWE2LTQwMzktYTZkMS0xZDRmZjZkMjI1MGEiLCJpc3MiOiJodHRwczovL3Nzby5jcC5tZWdhZm9uLnJ1IiwiYXVkIjpbImh0dHBzOi8vZGF0YS1hcGkuY3AubWVnYWZvbi5ydSIsImh0dHBzOi8vYmlsbGluZy1hcGkuY3AubWVnYWZvbi5ydSIsImh0dHBzOi8vc2ltcGxlLWFwaS5jcC5tZWdhZm9uLnJ1IiwiaHR0cHM6Ly9jYWxsYXBpLmNwLm1lZ2Fmb24ucnUiXSwic3ViIjoiQ29tYWdpY0RCfG1lZ2Fmb258OTM2MTU0fDMwMDg2Iiwic3ViZCI6eyJwcm9qZWN0IjoibWVnYWZvbiIsImFwcF9pZCI6OTM2MTU0LCJjdXN0b21lcl9pZCI6NDEzNCwidXNlcl9pZCI6MzAwODYsImxvZ2luIjoiQVBJQHN5c3RlbS52YXRzOTM2MTU0LmNwLm1lZ2Fmb24ucnUiLCJpc19zeXN0ZW0iOmZhbHNlfSwiY2xpZW50X2lkIjoiaHR0cHM6Ly9zaW1wbGUtYXBpLmNwLm1lZ2Fmb24ucnUiLCJpYXQiOjE3ODQxNzc2MTUsImFjdCI6eyJjbGllbnRfaWQiOiJodHRwczovL3NpbXBsZS1hcGkuY3AubWVnYWZvbi5ydSJ9LCJub3RfdHJ1c3RlZF9kZXZpY2UiOmZhbHNlLCJleHAiOjQ5Mzc3Nzc2MTV9.mavEv1dWVdR2EutzBGEZUmysfJ0K3KgSKl_UX5963lxeI9alWGVeOmNGGTkUXaTRcQ2lT2PCnMcb_5MfAb0NNuHN22UHh2n9gp94F4KwkDDkq2LkvobUSSBM4HgM9TP7rzYvjwnqJBg0w9ZOy-BrDO80bApkP8BT6hh3BQtxmaEpk9myiXDCzo0TEfsXhHsL_MH0zd5svx4uEoW-VZTSFqJTRzyxfkHifkIRupvqnJkXHonEglUxTQ6mfzdXVgvDWl7ko2TRKoPV5o1LxuTVUlPD5qPrPtVvkFYpNhhoP8Ofx-tNkKXcj7Y5JXCKY_k7xlYJrgxyyC00KWyh-XigBGgbZmmNA6RbLQhJcsHHwOhp4p4KJl724PcLXnSD3_gFdAJYaP77qrllYz7b34SZgJZqD2G4biJ0y444-GME7fSvK5I9HvFdD_Kj04mezMst0z-4oyUQMy9q7hJsnZmWn0uA9YWTZMboNlrzGM_jk1PppGkkNb1gIqjPe1LpuyWvMFf4ZiWAPnL3ZzW80C5PYG0ZcyglHAe_HqzqMMwK0JPhTouBKd6FfYgZMrfZ4WBoPoEDWuGyaOAyj0tZgR99yRdAZdGy3ELbBmG0Mv5fmB11xaLJV3lfzRetDXWhkcKgZZjAdqeulyVZg0UL1Pk6PBQB54OJYlF1vKtzrHjLyZY",
       "webhookUrl": "/api/calls/webhook",
       "autoImport": true,
-      "active": false,
-      "pollingEnabled": false,
-      "pollingIntervalMinutes": 1,
+      "active": true,
+      "pollingEnabled": true,
+      "pollingIntervalMinutes": 15,
       "lastPollingTime": "2026-07-28T06:14:23.415Z",
       "lkLogin": "admin@vats936154.cp.megafon.ru ",
       "lkPassword": "LIQ28liq28!"

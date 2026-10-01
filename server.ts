@@ -25,7 +25,7 @@ import { adminRouter } from './src/routes/admin.js';
 import { isYandexAuthConfigured } from './src/services/yandex-auth.js';
 import { isGigaChatConfigured } from './src/services/gigachat-auth.js';
 import { hydrateFromS3, scheduleSyncToS3, manualSync, getSyncStatus } from './src/services/s3-sync.js';
-import { generateCallAuditPdf } from './src/services/pdfReport.js';
+import { generateCallAuditPdf, generatePeriodStatsPdf, PeriodStatsReportData } from './src/services/pdfReport.js';
 import { generateCallCsv } from './src/services/csvExport.js';
 
 // Setup environment variables
@@ -734,34 +734,43 @@ async function analyzeCallTextOrAudio(
   if (!cleanTranscript) {
     if (hasAudio) {
       const audioKbytes = Math.round((Buffer.from(audioBase64!.data, 'base64').length) / 1024);
-      appendLog('warning', 'gigachat', `Аудиозапись получена (${audioKbytes} КБ), но расшифровка речи не вернула текст (${sttErrorReason}).`);
+      appendLog('warning', 'gigachat', `Аудиозапись получена (${audioKbytes} КБ), но расшифровка речи не вернула текст (${sttErrorReason || 'ошибка распознавания'}).`);
       
-      const isMissingConfig = sttErrorReason.includes('не настроен') || sttErrorReason.includes('ключ');
-      
-      if (isMissingConfig) {
+      const isSttIssue = !sttErrorReason ||
+        sttErrorReason.includes('не настроен') ||
+        sttErrorReason.includes('ключ') ||
+        sttErrorReason.includes('недоступен') ||
+        sttErrorReason.includes('Ошибка') ||
+        sttErrorReason.includes('status code') ||
+        sttErrorReason.includes('timeout') ||
+        sttErrorReason.includes('UNAUTHORIZED') ||
+        sttErrorReason.includes('Bad Request') ||
+        sttErrorReason.includes('SpeechKit');
+
+      if (isSttIssue || audioKbytes > 15) {
         return {
           transcript: `Стенограмма ожидает расшифровки. Аудиозапись доступна в плеере (${audioKbytes} КБ).`,
-          summary: `Аудиозапись звонка доступна для прослушивания в плеере, однако автоматическая расшифровка не была выполнена (${sttErrorReason}). Вы можете прослушать запись в плеере или указать API-ключ Yandex Cloud в панели управления и нажать «Пересчитать».`,
+          summary: `Аудиозапись звонка доступна для прослушивания в плеере (${audioKbytes} КБ), однако автоматическая расшифровка не была выполнена (${sttErrorReason || 'ожидает повторной обработки'}). Вы можете прослушать запись в плеере или нажать «Пересчитать».`,
           key_facts: {
             is_dispute: false,
             dispute_reason: null,
             promises: [],
             tone_client: 'нейтральный',
             tone_manager: 'нейтральный',
-            call_outcome: 'требует настройки STT',
+            call_outcome: 'ожидает расшифровки',
             booking_status: 'не применимо',
-            client_issue: 'Аудиозапись загружена и воспроизводится в плеере, расшифровка речи ожидает настройки ключа'
+            client_issue: 'Аудиозапись загружена и воспроизводится в плеере, расшифровка речи ожидает обработки'
           },
           trigger_phrases: [],
           recommendations: [
             'Прослушайте аудиозапись разговора в плеере ниже.',
-            'Для автоматической расшифровки перейдите в «Настройки системы» и укажите ключ Yandex Cloud SpeechKit.'
+            'Для расшифровки нажмите кнопку «Пересчитать» или проверьте ключ Yandex SpeechKit в настройках системы.'
           ],
           operator_score: null,
-          operator_comment: `Запись разговора доступна для прослушивания в плеере (${audioKbytes} КБ). Оценка оператора ожидает расшифровки речи Yandex SpeechKit.`
+          operator_comment: `Запись разговора доступна для прослушивания в плеере (${audioKbytes} КБ). Оценка работы оператора ожидает распознавания речи.`
         };
       } else {
-        // Audio had genuine silence, beep, or answering machine noise
+        // Genuine silence or ultra-short empty signal (< 15 KB)
         return {
           transcript: 'Аудиозапись не содержит разборчивой устной речи (тишина или звуковой сигнал).',
           summary: 'Разговор не состоялся: в аудиозаписи отсутствует речь (зафиксирована тишина или короткий сигнал). Аудиозапись доступна для прослушивания в плеере ниже.',
@@ -875,6 +884,51 @@ function getFallbackAnalysis(transcript: string, errorReason?: string): Partial<
   }
 
   const cleanTranscript = transcript || '';
+  const lowerClean = cleanTranscript.toLowerCase();
+
+  // Strict detection of auto-responder, voicemail, failed call, or silence
+  const isAutoOrFailed = 
+    !cleanTranscript ||
+    cleanTranscript.trim().length === 0 ||
+    lowerClean.includes('автоответчик') ||
+    lowerClean.includes('автоинформатор') ||
+    lowerClean.includes('голосовой помощник') ||
+    lowerClean.includes('голосовая почта') ||
+    lowerClean.includes('оставьте сообщение') ||
+    lowerClean.includes('после сигнала') ||
+    lowerClean.includes('не может ответить') ||
+    lowerClean.includes('временно недоступен') ||
+    lowerClean.includes('абонент занят') ||
+    lowerClean.includes('линия занята') ||
+    lowerClean.includes('разговор не состоялся') ||
+    lowerClean.includes('звонок не состоялся') ||
+    lowerClean.includes('не ответил') ||
+    lowerClean.includes('пропущенный') ||
+    lowerClean.includes('переадресация');
+
+  if (isAutoOrFailed) {
+    return {
+      transcript: cleanTranscript || 'Разговор не состоялся (автоответчик/пропущенный вызов).',
+      summary: 'Разговор не состоялся: сработал автоответчик, автоинформатор или линия была недоступна. Запись не оформлена.',
+      booking_status: 'не применимо',
+      key_facts: {
+        is_dispute: false,
+        dispute_reason: null,
+        promises: [],
+        tone_client: 'нейтральный',
+        tone_manager: 'нейтральный',
+        call_outcome: 'автоответчик',
+        booking_status: 'не применимо',
+        client_issue: 'Звонок не состоялся / автоответчик'
+      },
+      trigger_phrases: [],
+      recommendations: [
+        'Повторить попытку дозвона клиенту в рабочее время салона «Лик 28».'
+      ],
+      operator_score: null,
+      operator_comment: 'Разговор не состоялся: зафиксирован автоответчик или автоинформатор (оценка оператора не выставляется).'
+    };
+  }
 
   // Extract manager and client names if explicitly present
   let managerName = 'Менеджер';
@@ -916,7 +970,6 @@ function getFallbackAnalysis(transcript: string, errorReason?: string): Partial<
     }
   }
 
-  const lowerClean = cleanTranscript.toLowerCase();
   const isDeclined = lowerClean.includes('не будет в городе') || lowerClean.includes('не смогу') || lowerClean.includes('не получается') || lowerClean.includes('неудобно') || lowerClean.includes('отказ');
   const isBooked = !isDeclined && (lowerClean.includes('записали') || lowerClean.includes('до встречи') || lowerClean.includes('ждем вас'));
   const outcome = isBooked ? 'запись' : (isDeclined ? 'отказ' : (isDispute ? 'перезвон' : 'консультация'));
@@ -1545,6 +1598,85 @@ async function downloadAudioAsBase64(url: string, token?: string): Promise<{ dat
   return null;
 }
 
+// Helper to accurately determine call direction (incoming / outgoing)
+export function determineCallDirection(item: any, transcript = '', summary = ''): 'incoming' | 'outgoing' {
+  if (!item && !transcript && !summary) return 'incoming';
+
+  // 1. Direct explicit string/object properties from Megafon VATS or webhook payload
+  const candidates = [
+    item?.call_direction?.value_id,
+    item?.call_direction?.value,
+    item?.call_direction,
+    item?.direction?.value_id,
+    item?.direction?.value,
+    item?.direction,
+    item?.call_type?.value_id,
+    item?.call_type?.value,
+    item?.call_type,
+    item?.type?.value_id,
+    item?.type?.value,
+    item?.type,
+    item?.kind
+  ];
+
+  for (const c of candidates) {
+    if (typeof c === 'string') {
+      const lower = c.trim().toLowerCase();
+      if (lower === 'in' || lower === 'incoming' || lower.includes('вход') || lower === '1') {
+        return 'incoming';
+      }
+      if (lower === 'out' || lower === 'outgoing' || lower.includes('исход') || lower === '2') {
+        return 'outgoing';
+      }
+    } else if (typeof c === 'number') {
+      if (c === 1) return 'incoming';
+      if (c === 2) return 'outgoing';
+    }
+  }
+
+  // 2. Megafon VATS boolean or numeric flag: received_call (1 or true => incoming)
+  if (item?.received_call === true || item?.received_call === 1 || item?.received_call === '1' || item?.is_incoming === true) {
+    return 'incoming';
+  }
+
+  // 3. Check summary markers
+  const sumLower = (summary || item?.summary || '').toLowerCase();
+  if (sumLower.includes('пропущенный входящий') || sumLower.includes('входящий')) {
+    return 'incoming';
+  }
+  if (sumLower.includes('исходящий') || sumLower.includes('непринятый исходящий')) {
+    return 'outgoing';
+  }
+
+  // 4. Check transcript dialogue initiator
+  const trLower = (transcript || item?.transcript || '').toLowerCase();
+  if (
+    trLower.includes('салон красоты лик 28') ||
+    trLower.includes('салон лик 28') ||
+    trLower.includes('салон красоты лик, 28') ||
+    trLower.includes('чем могу вам помочь') ||
+    trLower.includes('чем я могу вам помочь') ||
+    trLower.includes('чем могу помочь') ||
+    trLower.includes('слушаю вас')
+  ) {
+    // If the manager answers with the salon greeting asking how to help, the client called in!
+    return 'incoming';
+  }
+  if (
+    trLower.includes('вас беспокоит салон') ||
+    trLower.includes('беспокоит салон красоты') ||
+    trLower.includes('вы у нас были записаны') ||
+    trLower.includes('напоминаем о вашей записи') ||
+    trLower.includes('прошу прощения, что вам не сразу перезвонила')
+  ) {
+    // Outbound reach from salon to client
+    return 'outgoing';
+  }
+
+  // Default for beauty salon calls is incoming inquiry
+  return 'incoming';
+}
+
 // Helper to parse HH:MM:SS format to seconds
 function parseDurationToSeconds(durationStr: string | number): number {
   if (typeof durationStr === 'number') return durationStr;
@@ -1703,8 +1835,7 @@ async function getRealMegafonCalls(fromDate: Date, toDate: Date, token: string):
     }
 
     const mappedCalls = data.map((item: any) => {
-      const dirVal = item.call_direction?.value_id || item.direction;
-      const direction = dirVal === 'in' ? 'incoming' : 'outgoing';
+      const direction = determineCallDirection(item);
 
       const statusId = item.call_status?.value_id || '';
       const talkDurationSec = parseDurationToSeconds(item.call_talk_duration);
@@ -1852,7 +1983,8 @@ async function importCallRecord(extCall: any): Promise<boolean> {
   }
 
   const isAnswered = extCall.is_answered && (extCall.duration_seconds > 0);
-  const isIncoming = extCall.type === 'incoming';
+  const direction = determineCallDirection(extCall, extCall.transcript, extCall.summary);
+  const isIncoming = direction === 'incoming';
 
   let newCall: CallRecord;
 
@@ -1885,7 +2017,7 @@ async function importCallRecord(extCall: any): Promise<boolean> {
       client_name: extCall.client_name,
       operator_name: extCall.operator_name,
       status: 'missed',
-      type: extCall.type,
+      type: direction,
       is_answered: false,
       is_demo: false
     };
@@ -1931,12 +2063,12 @@ async function importCallRecord(extCall: any): Promise<boolean> {
       },
       trigger_phrases: [],
       recommendations: [],
-      operator_score: 0,
+      operator_score: null,
       operator_comment: '',
       client_name: extCall.client_name,
       operator_name: extCall.operator_name,
       status: 'processing',
-      type: extCall.type,
+      type: direction,
       is_answered: true,
       audio_url: extCall.record_play_uri || undefined,
       is_demo: false
@@ -2043,11 +2175,15 @@ function isAtsPollingAllowedTime(): boolean {
 setInterval(async () => {
   try {
     const db = readDb();
-    if (db.config.megafon && db.config.megafon.active && db.config.megafon.pollingEnabled) {
-      const lastPollStr = db.config.megafon.lastPollingTime || new Date(Date.now() - 3600000 * 12).toISOString();
+    const megafon = db.config?.megafon;
+    const token = megafon?.token || (db.config as any)?.credentials?.megafonToken || process.env.MEGAFON_TOKEN || '';
+    const isPollingEnabled = megafon ? (megafon.pollingEnabled !== false && megafon.active !== false) : false;
+
+    if (token && isPollingEnabled) {
+      const lastPollStr = megafon.lastPollingTime || new Date(Date.now() - 3600000 * 12).toISOString();
       const lastPollDate = new Date(lastPollStr);
       
-      const intervalMins = Math.max(1, parseInt(String(db.config.megafon.pollingIntervalMinutes || 5), 10));
+      const intervalMins = Math.max(1, parseInt(String(megafon.pollingIntervalMinutes || 15), 10));
       const intervalMs = intervalMins * 60 * 1000;
       
       if (Date.now() - lastPollDate.getTime() < intervalMs) {
@@ -2055,7 +2191,6 @@ setInterval(async () => {
       }
 
       const now = new Date();
-      const token = db.config.megafon?.token || (db.config as any).credentials?.megafonToken || process.env.MEGAFON_TOKEN || '';
 
       appendLog('info', 'megafon', `[Авто-Опрос АТС] Выполнение планового фонового опроса АТС Мегафон (интервал: ${intervalMins} мин)...`);
 
@@ -2787,6 +2922,7 @@ app.post('/api/calls/webhook', async (req, res) => {
     const operatorName = payload.operator_name || payload.employee || 'Дежурный администратор';
     const duration = Number(payload.duration || payload.duration_seconds || 0);
     const status = payload.status === 'missed' || duration === 0 ? 'missed' : 'completed';
+    const direction = determineCallDirection(payload, payload.transcript, payload.summary);
 
     const newCall: CallRecord = {
       call_id: callId,
@@ -2794,16 +2930,17 @@ app.post('/api/calls/webhook', async (req, res) => {
       duration_seconds: duration,
       model_used: db.config.activeModel || 'GigaChat:Lite',
       transcript: payload.transcript || (status === 'missed' ? 'Звонок пропущен или сброшен до ответа' : 'Поступил звонок через АТС. Текст стенограммы...'),
-      summary: payload.summary || (status === 'missed' ? 'Пропущенный звонок через АТС' : 'Обращение клиента через телефонию АТС'),
+      summary: payload.summary || (status === 'missed' ? (direction === 'incoming' ? 'Пропущенный входящий звонок через АТС' : 'Непринятый исходящий звонок через АТС') : 'Обращение клиента через телефонию АТС'),
       client_name: clientName,
       client_phone_masked: maskedPhone,
       full_phone: clientPhone,
       operator_name: operatorName,
       status: status,
+      type: direction,
       is_answered: status !== 'missed',
       booking_status: payload.booking_status || (status === 'missed' ? 'не применимо' : 'консультация'),
-      operator_score: payload.operator_score !== undefined ? Number(payload.operator_score) : (status === 'missed' ? null : 8),
-      operator_comment: payload.operator_comment || (status === 'missed' ? 'Звонок не принят' : 'Обработан оператором'),
+      operator_score: (status === 'missed' || duration === 0) ? null : (payload.operator_score !== undefined ? Number(payload.operator_score) : null),
+      operator_comment: payload.operator_comment || (status === 'missed' ? 'Разговор не состоялся: зафиксирован пропущенный/неотвеченный вызов.' : 'Обработан оператором'),
       trigger_phrases: [],
       key_facts: {
         is_dispute: Boolean(payload.is_dispute),
@@ -2900,6 +3037,31 @@ app.get('/api/calls/:id/export-pdf', (req, res) => {
   }
 });
 
+// 2.065. EXPORT PERIOD STATS REPORT TO PDF (Сводный отчет за период со сравнительным анализом)
+app.post('/api/reports/period-stats-pdf', (req, res) => {
+  const userRole = getCurrentUserRole(req);
+  try {
+    const reportData: PeriodStatsReportData = req.body;
+    if (!reportData || !reportData.currentStats) {
+      return res.status(400).json({ error: 'Не переданы данные статистики для формирования отчета' });
+    }
+    reportData.userRole = userRole;
+
+    const doc = generatePeriodStatsPdf(reportData);
+    const sanitizedTitle = (reportData.periodTitle || 'period').replace(/[^a-zA-Zа-яА-Я0-9_-]/g, '_');
+    const filename = `Otchet_Lik28_${sanitizedTitle}.pdf`;
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+
+    doc.pipe(res);
+    doc.end();
+  } catch (error: any) {
+    console.error('Ошибка при генерации PDF отчета за период:', error);
+    res.status(500).json({ error: `Ошибка формирования PDF: ${error.message || error}` });
+  }
+});
+
 // 2.06. EXPORT CALL AUDIT REPORT TO CSV (С учетом маскирования 152-ФЗ)
 app.get('/api/calls/:id/export-csv', (req, res) => {
   const db = readDb();
@@ -2946,7 +3108,7 @@ app.get('/api/calls/:id/export-csv', (req, res) => {
   }
 });
 
-// 2.1. REANALYZE CALL WITH GIGACHAT (152-ФЗ Compliant)
+// 2.1. REANALYZE CALL WITH SPEECHKIT & GIGACHAT (152-ФЗ Compliant)
 app.post('/api/calls/:id/reanalyze', async (req, res) => {
   const { id } = req.params;
   const userRole = getCurrentUserRole(req);
@@ -2954,52 +3116,12 @@ app.post('/api/calls/:id/reanalyze', async (req, res) => {
     return res.status(403).json({ error: 'Недостаточно прав для переанализа (доступно только Администраторам и Управляющим)' });
   }
 
-  const db = readDb();
-  const callIdx = db.calls.findIndex((c: any) => c.call_id === id);
-  if (callIdx === -1) {
-    return res.status(404).json({ error: 'Звонок не найден' });
-  }
-
-  const call = db.calls[callIdx];
-  if (!call.transcript || call.transcript.length < 5) {
-    return res.status(400).json({ error: 'Стенограмма разговора пуста или отсутствует' });
-  }
-
-  const targetModel = (req.body?.model as GigaChatModel) || db.config?.default_gigachat_model || 'GigaChat:Lite';
-  appendLog('info', 'gigachat', `Повторный анализ звонка ${id} через модель ${targetModel}...`);
-
+  const modelOverride = req.body?.model;
   try {
-    const cleanTranscript = refineTranscriptRoles(fixDuplicatedTranscript(call.transcript));
-    const anonymizedText = anonymizeTranscript(cleanTranscript);
-    const analysis = await analyzeWithRetry(anonymizedText, targetModel, (type, msg) => appendLog(type, 'gigachat', msg));
-
-    const updatedCall: CallRecord = {
-      ...call,
-      transcript: analysis.formatted_transcript || cleanTranscript,
-      summary: analysis.transcript_summary,
-      booking_status: analysis.booking_status || analysis.key_facts?.booking_status,
-      key_facts: {
-        ...analysis.key_facts,
-        booking_status: analysis.booking_status || analysis.key_facts?.booking_status,
-        promises: call.key_facts?.promises || []
-      },
-      trigger_phrases: call.trigger_phrases || [],
-      recommendations: Array.isArray(analysis.recommendations) ? analysis.recommendations : [analysis.recommendations],
-      operator_score: analysis.operator_score,
-      operator_comment: analysis.operator_comment,
-      model_used: targetModel,
-      gigachat_model: targetModel,
-      status: 'completed'
-    };
-
-    db.calls[callIdx] = updatedCall;
-    writeDb(db);
-
-    appendLog('success', 'gigachat', `Звонок ${id} успешно переанализирован моделью ${targetModel}`);
+    const updatedCall = await performCallReanalysis(id, modelOverride);
     res.json(updatedCall);
   } catch (err: any) {
-    appendLog('error', 'gigachat', `Сбой при переанализе ${id}: ${err.message}`);
-    res.status(500).json({ error: err.message || 'Внутренняя ошибка переанализа' });
+    res.status(500).json({ error: err.message || 'Внутренняя ошибка переанализа звонка' });
   }
 });
 
@@ -3128,7 +3250,7 @@ app.post('/api/calls/analyze', async (req, res) => {
 });
 
 // Core reanalysis logic for a call (reusable by API and background worker)
-async function performCallReanalysis(callId: string): Promise<any> {
+async function performCallReanalysis(callId: string, modelOverride?: string): Promise<any> {
   const db = readDb();
   const callIdx = db.calls.findIndex((c: any) => c.call_id === callId);
   if (callIdx === -1) {
@@ -3172,12 +3294,14 @@ async function performCallReanalysis(callId: string): Promise<any> {
     call.transcript.includes('Ошибка:') ||
     call.transcript.includes('отсутствует диалог') ||
     call.transcript.includes('Автоответчик:') ||
+    call.transcript.includes('автоответчик') ||
+    call.transcript.includes('Сработал автоответчик') ||
     call.transcript.includes('линия занята');
 
   // If the call has audio, always prioritize fresh transcription from audio with Yandex SpeechKit!
   const existingTranscript = (!isErroneousTranscript && !call.audio_url) ? call.transcript : '';
 
-  const selectedModel = db.config.activeModel || 'GigaChat:Lite';
+  const selectedModel = (modelOverride as GigaChatModel) || db.config.default_gigachat_model || db.config.activeModel || 'GigaChat:Lite';
 
   // Mark status as processing and record attempt metadata
   call.status = 'processing';
@@ -3236,7 +3360,9 @@ async function performCallReanalysis(callId: string): Promise<any> {
         ...finalDb.calls[finalCallIdx],
         ...analysisResult,
         status: isFailed ? 'failed' : 'completed',
-        is_demo: false
+        is_demo: false,
+        model_used: selectedModel,
+        gigachat_model: selectedModel.startsWith('GigaChat') ? (selectedModel as GigaChatModel) : 'GigaChat:Lite'
       };
       if (audioUrl) {
         finalDb.calls[finalCallIdx].audio_url = audioUrl;
@@ -3274,15 +3400,56 @@ async function performCallReanalysis(callId: string): Promise<any> {
   }
 }
 
-// Re-analyze an existing call (REST API)
-app.post('/api/calls/:id/reanalyze', async (req, res) => {
-  const callId = req.params.id;
-  try {
-    const savedCall = await performCallReanalysis(callId);
-    res.json(savedCall);
-  } catch (err: any) {
-    res.status(500).json({ error: 'Ошибка во время переанализа звонка', details: err.message });
+// Batch re-analyze all un-transcribed calls or calls with audio (REST API)
+app.post('/api/calls/batch-reanalyze', async (req, res) => {
+  const userRole = getCurrentUserRole(req);
+  if (userRole === 'viewer' || userRole === 'operator') {
+    return res.status(403).json({ error: 'Недостаточно прав для пакетной обработки (доступно только Администраторам и Управляющим)' });
   }
+
+  const db = readDb();
+  const modelOverride = req.body?.model;
+
+  const candidates = db.calls.filter((c: any) =>
+    c.duration_seconds > 0 &&
+    c.audio_url &&
+    (
+      !c.transcript ||
+      c.transcript.length < 35 ||
+      c.transcript.includes('Стенограмма ожидает') ||
+      c.transcript.includes('не содержит разборчивой речи') ||
+      c.transcript.includes('Загрузка аудиозаписи') ||
+      c.operator_comment?.includes('Аудиозапись доступна в плеере') ||
+      c.operator_comment?.includes('Сработал автоответчик') ||
+      c.operator_comment?.includes('не состоялся') ||
+      c.summary?.includes('доступна для прослушивания в плеере') ||
+      c.status === 'failed' ||
+      c.status === 'processing'
+    )
+  );
+
+  appendLog('info', 'speechkit', `Запущен пакетный переанализ для ${candidates.length} звонков...`);
+
+  // Start background queue processing
+  (async () => {
+    let successCount = 0;
+    for (const c of candidates) {
+      try {
+        await performCallReanalysis(c.call_id, modelOverride);
+        successCount++;
+        await new Promise(r => setTimeout(r, 600));
+      } catch (err: any) {
+        console.warn(`[BatchReanalyze] Ошибка обработки звонка ${c.call_id}:`, err.message);
+      }
+    }
+    appendLog('success', 'speechkit', `Пакетный переанализ завершен: успешно обработано ${successCount} из ${candidates.length} звонков.`);
+  })();
+
+  res.json({
+    success: true,
+    totalQueued: candidates.length,
+    message: `Запущен фоновый переанализ для ${candidates.length} звонков через Yandex SpeechKit и GigaChat.`
+  });
 });
 
 // 4. SIMULATE WEBHOOK FROM MEGAFON ATS (Section 2.1) - DISABLED PER CUSTOMER REQUEST
@@ -3798,45 +3965,16 @@ async function startServer() {
             call.operator_comment?.includes('по технической причине')
           )
         ) {
-          call.summary = 'Аудиозапись звонка доступна для прослушивания в плеере. Выполняется автоматическая расшифровка речи и оценка качества...';
+          call.summary = 'Аудиозапись звонка доступна для прослушивания в плеере. Стенограмма ожидает распознавания речи.';
           call.transcript = 'Стенограмма ожидает расшифровки. Аудиозапись доступна в плеере.';
-          call.operator_comment = 'Аудиозапись доступна в плеере. Идет автоматическая обработка разговора.';
-          call.status = 'processing';
+          call.operator_comment = 'Аудиозапись доступна в плеере. Оценка работы оператора ожидает распознавания речи.';
+          call.status = 'completed';
           fixedCount++;
-
-          // Asynchronously re-analyze in background using new STT pipeline
-          const cId = call.call_id;
-          const aUrl = call.audio_url;
-          if (aUrl && aUrl.startsWith('http')) {
-            setTimeout(async () => {
-              try {
-                const curDb = readDb();
-                const mToken = curDb.config.megafon?.token;
-                const audio = await downloadAudioAsBase64(aUrl, mToken);
-                if (audio) {
-                  const res = await analyzeCallTextOrAudio(curDb.config.activeModel || 'GigaChat:Lite', '', audio, false);
-                  const freshDb = readDb();
-                  const targetIdx = freshDb.calls.findIndex((c: any) => c.call_id === cId);
-                  if (targetIdx !== -1) {
-                    freshDb.calls[targetIdx] = {
-                      ...freshDb.calls[targetIdx],
-                      ...res,
-                      status: 'completed'
-                    };
-                    writeDb(freshDb);
-                    console.log(`[AutoRepair] Звонок ${cId} успешно автоматически переанализирован!`);
-                  }
-                }
-              } catch (err: any) {
-                console.warn(`[AutoRepair] Не удалось автоматически переанализировать звонок ${cId}:`, err.message);
-              }
-            }, fixedCount * 2500);
-          }
         }
       }
       if (fixedCount > 0) {
         writeDb(db);
-        console.log(`[Migration] Успешно исправлены дублированные реплики в ${fixedCount} звонках.`);
+        console.log(`[Migration] Успешно нормализованы статусы в ${fixedCount} звонках без вызова внешних квот.`);
       }
     }
   } catch (mErr: any) {

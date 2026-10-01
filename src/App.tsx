@@ -677,7 +677,7 @@ export default function App() {
                   transition={{ duration: 0.12 }}
                   className="min-h-[500px]"
                 >
-                  <StatsGrid stats={stats} calls={calls} />
+                  <StatsGrid stats={stats} calls={calls} authToken={authToken} userRole={userRole} />
                 </motion.div>
               )}
 

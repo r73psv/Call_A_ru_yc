@@ -10,7 +10,8 @@ import {
   Clock, Flame, Activity, BarChart2, Grid3X3, Info, 
   Users, ChevronDown, ChevronUp, Zap, Sparkles,
   Smile, Frown, HeartHandshake, ShieldCheck, Calendar, LineChart as LineChartIcon,
-  Award
+  Award, FileDown, ArrowUpDown, ChevronRight, SlidersHorizontal, ArrowUpRight, 
+  ArrowDownRight, Minus, RefreshCcw, FileText, Check, Loader2, ArrowRight
 } from 'lucide-react';
 import { 
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, 
@@ -20,9 +21,61 @@ import {
 import * as d3 from 'd3';
 import { DashboardStats, CallRecord, SentimentTrendItem } from '../types.js';
 
+export interface PeriodStatsReportData {
+  periodTitle: string;
+  periodDates: string;
+  isComparative: boolean;
+  comparePeriodTitle?: string;
+  compareDates?: string;
+  currentStats: {
+    totalCalls: number;
+    incomingCalls: number;
+    outgoingCalls: number;
+    completedCalls: number;
+    missedCalls: number;
+    bookedCount: number;
+    declinedCount: number;
+    consultationCount: number;
+    conversionRate: number;
+    averageScore: number;
+    disputeCount: number;
+    disputeRate: number;
+    avgDurationSec: number;
+  };
+  previousStats?: {
+    totalCalls: number;
+    incomingCalls: number;
+    outgoingCalls: number;
+    completedCalls: number;
+    missedCalls: number;
+    bookedCount: number;
+    declinedCount: number;
+    consultationCount: number;
+    conversionRate: number;
+    averageScore: number;
+    disputeCount: number;
+    disputeRate: number;
+    avgDurationSec: number;
+  };
+  operators: Array<{
+    name: string;
+    totalCalls: number;
+    avgScore: number | null;
+    bookedCount: number;
+    conversionRate: number;
+    disputes: number;
+    prevAvgScore?: number | null;
+    prevConversionRate?: number;
+  }>;
+  hourlyPeakHours?: string;
+  userRole?: string;
+}
+
 interface StatsGridProps {
   stats: DashboardStats;
   calls?: CallRecord[];
+  authToken?: string | null;
+  userRole?: string;
 }
 
 const RUSSIAN_DAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
@@ -42,7 +95,284 @@ interface CellData {
   avgScore: number | null;
 }
 
-export function StatsGrid({ stats, calls = [] }: StatsGridProps) {
+export function StatsGrid({ stats, calls = [], authToken, userRole }: StatsGridProps) {
+  // Period Selection and Comparative Analysis
+  const { minDateStr, maxDateStr } = useMemo(() => {
+    if (!calls || calls.length === 0) return { minDateStr: '2026-07-01', maxDateStr: '2026-10-01' };
+    const sorted = [...calls]
+      .map(c => c.timestamp?.slice(0, 10))
+      .filter((d): d is string => !!d)
+      .sort();
+    if (sorted.length === 0) return { minDateStr: '2026-07-01', maxDateStr: '2026-10-01' };
+    return { minDateStr: sorted[0], maxDateStr: sorted[sorted.length - 1] };
+  }, [calls]);
+
+  const [periodType, setPeriodType] = useState<'week' | 'month' | 'year' | 'custom' | 'all'>('all');
+  const [startDate, setStartDate] = useState<string>(() => minDateStr);
+  const [endDate, setEndDate] = useState<string>(() => maxDateStr);
+  const [isComparative, setIsComparative] = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
+  const [exportSuccess, setExportSuccess] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  // Sync dates when min/max dates change initially if in 'all' mode
+  React.useEffect(() => {
+    if (periodType === 'all') {
+      setStartDate(minDateStr);
+      setEndDate(maxDateStr);
+    }
+  }, [minDateStr, maxDateStr, periodType]);
+
+  const handleSelectPreset = (type: 'week' | 'month' | 'year' | 'custom' | 'all') => {
+    setPeriodType(type);
+    const endD = new Date(maxDateStr);
+    if (type === 'week') {
+      const startD = new Date(endD.getTime() - 6 * 86400000);
+      setStartDate(startD.toISOString().slice(0, 10));
+      setEndDate(endD.toISOString().slice(0, 10));
+    } else if (type === 'month') {
+      const startD = new Date(endD.getTime() - 29 * 86400000);
+      setStartDate(startD.toISOString().slice(0, 10));
+      setEndDate(endD.toISOString().slice(0, 10));
+    } else if (type === 'year') {
+      setStartDate('2026-01-01');
+      setEndDate('2026-12-31');
+    } else if (type === 'all') {
+      setStartDate(minDateStr);
+      setEndDate(maxDateStr);
+    }
+  };
+
+  const { prevStartDate, prevEndDate } = useMemo(() => {
+    try {
+      const s = new Date(startDate).getTime();
+      const e = new Date(endDate).getTime();
+      const diff = Math.max(86400000, e - s);
+      const prevEnd = new Date(s - 86400000);
+      const prevStart = new Date(prevEnd.getTime() - diff);
+      return {
+        prevStartDate: prevStart.toISOString().slice(0, 10),
+        prevEndDate: prevEnd.toISOString().slice(0, 10)
+      };
+    } catch {
+      return { prevStartDate: '', prevEndDate: '' };
+    }
+  }, [startDate, endDate]);
+
+  const currentCalls = useMemo(() => {
+    if (!calls || calls.length === 0) return [];
+    if (periodType === 'all' && startDate === minDateStr && endDate === maxDateStr) {
+      return calls;
+    }
+    return calls.filter((c) => {
+      if (!c.timestamp) return false;
+      const d = c.timestamp.slice(0, 10);
+      return d >= startDate && d <= endDate;
+    });
+  }, [calls, startDate, endDate, periodType, minDateStr, maxDateStr]);
+
+  const previousCalls = useMemo(() => {
+    if (!isComparative || !calls || calls.length === 0 || !prevStartDate || !prevEndDate) return [];
+    return calls.filter((c) => {
+      if (!c.timestamp) return false;
+      const d = c.timestamp.slice(0, 10);
+      return d >= prevStartDate && d <= prevEndDate;
+    });
+  }, [calls, isComparative, prevStartDate, prevEndDate]);
+
+  function computeStats(list: CallRecord[]) {
+    const totalCalls = list.length;
+    const incomingCalls = list.filter(c => c.type === 'incoming').length;
+    const outgoingCalls = list.filter(c => c.type === 'outgoing').length;
+    const completedCalls = list.filter(c => c.status === 'completed' || (c.is_answered && c.duration_seconds > 0)).length;
+    const missedCalls = list.filter(c => c.status === 'missed' || !c.is_answered || c.duration_seconds === 0).length;
+    const bookedCount = list.filter(c => c.booking_status === 'согласие' || c.key_facts?.call_outcome === 'запись' || c.key_facts?.call_outcome === 'успешно').length;
+    const declinedCount = list.filter(c => c.booking_status === 'отказ' || c.key_facts?.call_outcome === 'отказ').length;
+    const consultationCount = list.filter(c => c.booking_status === 'консультация' || c.key_facts?.call_outcome === 'консультация').length;
+    const conversionRate = totalCalls > 0 ? Math.round((bookedCount / totalCalls) * 100) : 0;
+    const scored = list.filter(c => typeof c.operator_score === 'number' && c.operator_score !== null && !isNaN(c.operator_score));
+    const averageScore = scored.length > 0 ? parseFloat((scored.reduce((acc, c) => acc + (c.operator_score || 0), 0) / scored.length).toFixed(1)) : 0;
+    const disputeCount = list.filter(c => !!c.key_facts?.is_dispute).length;
+    const disputeRate = totalCalls > 0 ? Math.round((disputeCount / totalCalls) * 100) : 0;
+    const avgDurationSec = totalCalls > 0 ? Math.round(list.reduce((acc, c) => acc + (c.duration_seconds || 0), 0) / totalCalls) : 0;
+
+    return {
+      totalCalls,
+      incomingCalls,
+      outgoingCalls,
+      completedCalls,
+      missedCalls,
+      bookedCount,
+      declinedCount,
+      consultationCount,
+      conversionRate,
+      averageScore,
+      disputeCount,
+      disputeRate,
+      avgDurationSec
+    };
+  }
+
+  const curStats = useMemo(() => {
+    if (currentCalls.length > 0) return computeStats(currentCalls);
+    return {
+      totalCalls: stats.totalCalls || 0,
+      incomingCalls: 0,
+      outgoingCalls: 0,
+      completedCalls: 0,
+      missedCalls: 0,
+      bookedCount: 0,
+      declinedCount: 0,
+      consultationCount: 0,
+      conversionRate: stats.successRate || 0,
+      averageScore: stats.averageScore || 0,
+      disputeCount: 0,
+      disputeRate: stats.disputeRate || 0,
+      avgDurationSec: 0
+    };
+  }, [currentCalls, stats]);
+
+  const prevStats = useMemo(() => isComparative ? computeStats(previousCalls) : undefined, [previousCalls, isComparative]);
+
+  function calcDelta(curVal: number, prevVal?: number, isPercent = false, invert = false) {
+    if (prevVal === undefined || (prevVal === 0 && curVal === 0)) {
+      return { text: '—', isGood: true, diff: 0, hasPrev: false };
+    }
+    const diff = curVal - prevVal;
+    const sign = diff > 0 ? '+' : '';
+    let text = isPercent ? `${sign}${diff.toFixed(1)}%` : `${sign}${diff}`;
+    if (!isPercent && prevVal > 0) {
+      const pct = ((diff / prevVal) * 100).toFixed(0);
+      text += ` (${sign}${pct}%)`;
+    }
+    const isGood = invert ? diff <= 0 : diff >= 0;
+    return { text, isGood, diff, hasPrev: true };
+  }
+
+  // Operator Performance and Comparative Ranking
+  const operatorsData = useMemo(() => {
+    const map: Record<string, {
+      name: string;
+      totalCalls: number;
+      bookedCount: number;
+      disputes: number;
+      scores: number[];
+      prevTotalCalls: number;
+      prevBookedCount: number;
+      prevScores: number[];
+    }> = {};
+
+    currentCalls.forEach((c) => {
+      const name = c.operator_name || 'Дежурный администратор';
+      if (!map[name]) {
+        map[name] = { name, totalCalls: 0, bookedCount: 0, disputes: 0, scores: [], prevTotalCalls: 0, prevBookedCount: 0, prevScores: [] };
+      }
+      map[name].totalCalls++;
+      if (c.booking_status === 'согласие' || c.key_facts?.call_outcome === 'запись' || c.key_facts?.call_outcome === 'успешно') {
+        map[name].bookedCount++;
+      }
+      if (c.key_facts?.is_dispute) {
+        map[name].disputes++;
+      }
+      if (typeof c.operator_score === 'number' && c.operator_score !== null && !isNaN(c.operator_score)) {
+        map[name].scores.push(c.operator_score);
+      }
+    });
+
+    if (isComparative) {
+      previousCalls.forEach((c) => {
+        const name = c.operator_name || 'Дежурный администратор';
+        if (!map[name]) {
+          map[name] = { name, totalCalls: 0, bookedCount: 0, disputes: 0, scores: [], prevTotalCalls: 0, prevBookedCount: 0, prevScores: [] };
+        }
+        map[name].prevTotalCalls++;
+        if (c.booking_status === 'согласие' || c.key_facts?.call_outcome === 'запись' || c.key_facts?.call_outcome === 'успешно') {
+          map[name].prevBookedCount++;
+        }
+        if (typeof c.operator_score === 'number' && c.operator_score !== null && !isNaN(c.operator_score)) {
+          map[name].prevScores.push(c.operator_score);
+        }
+      });
+    }
+
+    return Object.values(map).map((op) => {
+      const avgScore = op.scores.length > 0 ? parseFloat((op.scores.reduce((a, b) => a + b, 0) / op.scores.length).toFixed(1)) : null;
+      const prevAvgScore = op.prevScores.length > 0 ? parseFloat((op.prevScores.reduce((a, b) => a + b, 0) / op.prevScores.length).toFixed(1)) : null;
+      const conversionRate = op.totalCalls > 0 ? Math.round((op.bookedCount / op.totalCalls) * 100) : 0;
+      const prevConversionRate = op.prevTotalCalls > 0 ? Math.round((op.prevBookedCount / op.prevTotalCalls) * 100) : 0;
+      return {
+        name: op.name,
+        totalCalls: op.totalCalls,
+        avgScore,
+        bookedCount: op.bookedCount,
+        conversionRate,
+        disputes: op.disputes,
+        prevTotalCalls: op.prevTotalCalls,
+        prevAvgScore,
+        prevConversionRate
+      };
+    }).sort((a, b) => b.totalCalls - a.totalCalls);
+  }, [currentCalls, previousCalls, isComparative]);
+
+  // Export PDF Handler
+  const handleExportPeriodPdf = async () => {
+    setExportingPdf(true);
+    setExportError(null);
+    setExportSuccess(false);
+    try {
+      const periodTitles: Record<string, string> = {
+        week: 'Неделя',
+        month: 'Месяц',
+        year: 'Год (2026)',
+        all: 'Все время',
+        custom: 'Произвольный период'
+      };
+
+      const reportData: PeriodStatsReportData = {
+        periodTitle: periodTitles[periodType] || 'Выбранный период',
+        periodDates: `${startDate} — ${endDate}`,
+        isComparative,
+        comparePeriodTitle: isComparative ? 'Предыдущий аналогичный период' : undefined,
+        compareDates: isComparative ? `${prevStartDate} — ${prevEndDate}` : undefined,
+        currentStats: curStats,
+        previousStats: prevStats,
+        operators: operatorsData,
+        hourlyPeakHours: '11:00 — 16:00',
+        userRole
+      };
+
+      const res = await fetch('/api/reports/period-stats-pdf', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {})
+        },
+        body: JSON.stringify(reportData)
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || `Ошибка сервера (${res.status})`);
+      }
+
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Otchet_Lik28_${periodType}_${startDate}_${endDate}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+      setExportSuccess(true);
+      setTimeout(() => setExportSuccess(false), 4000);
+    } catch (err: any) {
+      setExportError(err.message || 'Сбой при формировании PDF отчета');
+    } finally {
+      setExportingPdf(false);
+    }
+  };
+
   // Heatmap states
   const [viewMode, setViewMode] = useState<'heatmap' | 'chart'>('heatmap');
   const [hourRange, setHourRange] = useState<'work' | 'full'>('work'); // 'work': 8..21, 'full': 0..23
@@ -56,47 +386,55 @@ export function StatsGrid({ stats, calls = [] }: StatsGridProps) {
   const [isSentimentExpanded, setIsSentimentExpanded] = useState(true);
   const [showNeutralLine, setShowNeutralLine] = useState(false);
 
-  // 1. KPI Summary Cards
+  // 1. Dynamic KPI Summary Cards
   const cards = [
     {
       id: 'stats-total',
       title: 'Всего звонков',
-      value: stats.totalCalls,
-      subtitle: 'Проанализировано ИИ',
+      value: curStats.totalCalls,
+      subtitle: `${curStats.incomingCalls} вход. / ${curStats.outgoingCalls} исход.`,
       icon: Phone,
       color: 'bg-blue-50 text-blue-600 border-blue-100',
       progress: 100,
       progressColor: 'bg-blue-600',
+      delta: prevStats ? calcDelta(curStats.totalCalls, prevStats.totalCalls) : null,
+      prevValue: prevStats ? `${prevStats.totalCalls} вызовов` : null,
     },
     {
       id: 'stats-dispute',
       title: 'Уровень споров / конфликтов',
-      value: `${stats.disputeRate}%`,
-      subtitle: stats.disputeRate > 20 ? 'Требует внимания' : 'В пределах нормы',
+      value: `${curStats.disputeRate}%`,
+      subtitle: curStats.disputeRate > 20 ? 'Требует внимания' : 'В пределах нормы',
       icon: AlertTriangle,
-      color: stats.disputeRate > 20 ? 'bg-red-50 text-red-600 border-red-100' : 'bg-amber-50 text-amber-600 border-amber-100',
-      progress: stats.disputeRate,
-      progressColor: stats.disputeRate > 20 ? 'bg-red-500' : 'bg-amber-500',
+      color: curStats.disputeRate > 20 ? 'bg-red-50 text-red-600 border-red-100' : 'bg-amber-50 text-amber-600 border-amber-100',
+      progress: curStats.disputeRate,
+      progressColor: curStats.disputeRate > 20 ? 'bg-red-500' : 'bg-amber-500',
+      delta: prevStats ? calcDelta(curStats.disputeRate, prevStats.disputeRate, true, true) : null,
+      prevValue: prevStats ? `${prevStats.disputeRate}%` : null,
     },
     {
       id: 'stats-score',
       title: 'Средний балл операторов',
-      value: `${stats.averageScore} / 10`,
-      subtitle: stats.averageScore >= 8 ? 'Высокое качество' : 'Рекомендуется тренинг',
+      value: `${curStats.averageScore} / 10`,
+      subtitle: curStats.averageScore >= 8 ? 'Высокое качество' : 'Рекомендуется тренинг',
       icon: Star,
-      color: stats.averageScore >= 8 ? 'bg-green-50 text-green-600 border-green-100' : 'bg-orange-50 text-orange-600 border-orange-100',
-      progress: stats.averageScore * 10,
-      progressColor: stats.averageScore >= 8 ? 'bg-green-500' : 'bg-orange-500',
+      color: curStats.averageScore >= 8 ? 'bg-green-50 text-green-600 border-green-100' : 'bg-orange-50 text-orange-600 border-orange-100',
+      progress: curStats.averageScore * 10,
+      progressColor: curStats.averageScore >= 8 ? 'bg-green-500' : 'bg-orange-500',
+      delta: prevStats ? calcDelta(curStats.averageScore, prevStats.averageScore) : null,
+      prevValue: prevStats ? `${prevStats.averageScore} / 10` : null,
     },
     {
       id: 'stats-success',
       title: 'Успешность (Конверсия)',
-      value: `${stats.successRate}%`,
-      subtitle: 'Звонки с успешным исходом',
+      value: `${curStats.conversionRate}%`,
+      subtitle: `${curStats.bookedCount} записей из ${curStats.totalCalls}`,
       icon: CheckCircle,
       color: 'bg-emerald-50 text-emerald-600 border-emerald-100',
-      progress: stats.successRate,
+      progress: curStats.conversionRate,
       progressColor: 'bg-emerald-500',
+      delta: prevStats ? calcDelta(curStats.conversionRate, prevStats.conversionRate, true) : null,
+      prevValue: prevStats ? `${prevStats.conversionRate}%` : null,
     },
   ];
 
@@ -497,6 +835,156 @@ export function StatsGrid({ stats, calls = [] }: StatsGridProps) {
 
   return (
     <div className="space-y-4" id="stats-grid-wrapper">
+      {/* 0. Period Selector, Comparative Analysis & PDF Export Header Panel */}
+      <div className="bg-white border border-slate-200/90 rounded-2xl p-4 sm:p-5 shadow-xs" id="period-selector-panel">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 bg-emerald-50 text-emerald-600 rounded-lg border border-emerald-200">
+                <Calendar className="w-4 h-4" />
+              </div>
+              <h2 className="text-base font-bold text-slate-900 tracking-tight">
+                Период статистики и аналитики
+              </h2>
+              <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 font-mono">
+                {currentCalls.length} вызовов
+              </span>
+            </div>
+            <p className="text-xs text-slate-500">
+              Выборка звонков салона «Лик 28» по периодам (неделя, месяц, год, произвольный период) со сравнительным анализом и выгрузкой в PDF.
+            </p>
+          </div>
+
+          {/* PDF Export Button */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleExportPeriodPdf}
+              disabled={exportingPdf}
+              id="btn-export-period-pdf"
+              className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white font-semibold text-xs rounded-xl shadow-xs transition-colors"
+            >
+              {exportingPdf ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Формирование PDF...</span>
+                </>
+              ) : exportSuccess ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-white" />
+                  <span>Отчет скачан!</span>
+                </>
+              ) : (
+                <>
+                  <FileDown className="w-3.5 h-3.5" />
+                  <span>Выгрузить отчет в PDF</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {exportError && (
+          <div className="mt-3 p-2.5 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-lg flex items-center justify-between">
+            <span>{exportError}</span>
+            <button onClick={() => setExportError(null)} className="text-rose-500 hover:text-rose-700 font-bold ml-2">×</button>
+          </div>
+        )}
+
+        {/* Toolbar controls */}
+        <div className="mt-4 pt-4 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3">
+          {/* Preset Buttons */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-xs font-semibold text-slate-500 mr-1 flex items-center gap-1">
+              <SlidersHorizontal className="w-3 h-3" /> Период:
+            </span>
+            {[
+              { id: 'week', label: 'Неделя' },
+              { id: 'month', label: 'Месяц' },
+              { id: 'year', label: 'Год' },
+              { id: 'custom', label: 'Произвольный' },
+              { id: 'all', label: 'Все звонки' },
+            ].map((p) => (
+              <button
+                key={p.id}
+                onClick={() => handleSelectPreset(p.id as any)}
+                id={`btn-period-${p.id}`}
+                className={`px-3 py-1.5 text-xs rounded-lg font-semibold transition-all ${
+                  periodType === p.id
+                    ? 'bg-slate-900 text-white shadow-3xs'
+                    : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200'
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Date Picker inputs and Comparative Switch */}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1">
+              <span className="text-[11px] text-slate-400 font-medium">с</span>
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => {
+                  setStartDate(e.target.value);
+                  setPeriodType('custom');
+                }}
+                className="bg-transparent text-xs font-bold text-slate-800 focus:outline-hidden"
+              />
+              <span className="text-[11px] text-slate-400 font-medium">по</span>
+              <input
+                type="date"
+                value={endDate}
+                onChange={(e) => {
+                  setEndDate(e.target.value);
+                  setPeriodType('custom');
+                }}
+                className="bg-transparent text-xs font-bold text-slate-800 focus:outline-hidden"
+              />
+            </div>
+
+            {/* Comparative Analysis Toggle */}
+            <button
+              onClick={() => setIsComparative(!isComparative)}
+              id="btn-toggle-comparative"
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+                isComparative
+                  ? 'bg-indigo-50 border-indigo-300 text-indigo-700 shadow-3xs'
+                  : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+              }`}
+              title="Сравнить метрики с предыдущим периодом такой же длительности"
+            >
+              <ArrowUpDown className="w-3.5 h-3.5" />
+              <span>Сравнительный анализ</span>
+              {isComparative && (
+                <span className="w-2 h-2 rounded-full bg-indigo-600 animate-pulse"></span>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* Comparative Analysis Notice Banner */}
+        {isComparative && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="mt-3 p-3 bg-linear-to-r from-indigo-50/80 via-blue-50/50 to-purple-50/50 border border-indigo-200 rounded-xl text-xs text-indigo-900 flex flex-wrap items-center justify-between gap-2"
+          >
+            <div className="flex items-center gap-2">
+              <span className="p-1 bg-indigo-600 text-white rounded-md text-[10px] font-bold">VS</span>
+              <span>
+                <strong>Сравнительный режим:</strong> Текущий период (<strong>{startDate} — {endDate}</strong>) сравнивается с предыдущим периодом (<strong>{prevStartDate} — {prevEndDate}</strong>).
+              </span>
+            </div>
+            <span className="text-[11px] font-mono text-indigo-700 bg-white/80 px-2 py-0.5 rounded border border-indigo-200">
+              Звонков в пред. периоде: {previousCalls.length}
+            </span>
+          </motion.div>
+        )}
+      </div>
+
       {/* 1. Main KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4" id="stats-grid-container">
         {cards.map((card, index) => {
@@ -531,12 +1019,30 @@ export function StatsGrid({ stats, calls = [] }: StatsGridProps) {
                 </div>
                 <div className="flex justify-between items-center mt-2 text-xs text-slate-400">
                   <span>{card.subtitle}</span>
-                  {card.id === 'stats-total' ? (
+                  {card.id === 'stats-total' && !isComparative ? (
                     <span className="flex items-center text-emerald-600 gap-0.5 font-medium">
                       <TrendingUp className="w-3.5 h-3.5" /> +12% сегодня
                     </span>
                   ) : null}
                 </div>
+
+                {isComparative && card.delta && card.delta.hasPrev && (
+                  <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-xs">
+                    <span className="text-slate-500 font-medium">Пред.: {card.prevValue}</span>
+                    <span className={`inline-flex items-center font-bold px-2 py-0.5 rounded text-[11px] ${
+                      card.delta.isGood ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-rose-50 text-rose-700 border border-rose-200'
+                    }`}>
+                      {card.delta.diff > 0 ? (
+                        <ArrowUpRight className="w-3 h-3 mr-0.5" />
+                      ) : card.delta.diff < 0 ? (
+                        <ArrowDownRight className="w-3 h-3 mr-0.5" />
+                      ) : (
+                        <Minus className="w-3 h-3 mr-0.5" />
+                      )}
+                      {card.delta.text}
+                    </span>
+                  </div>
+                )}
               </div>
             </motion.div>
           );
@@ -912,7 +1418,148 @@ export function StatsGrid({ stats, calls = [] }: StatsGridProps) {
       </div>
 
       {/* ========================================================================= */}
-      {/* 3. HEATMAP & HOURLY LOAD MATRIX (D3 + RECHARTS)                           */}
+      {/* 2.5. OPERATOR PERFORMANCE & COMPARATIVE RANKING TABLE                     */}
+      {/* ========================================================================= */}
+      {operatorsData && operatorsData.length > 0 && (
+        <div className="bg-white border border-slate-200/90 rounded-2xl shadow-xs overflow-hidden" id="operator-performance-card">
+          <div className="p-4 sm:p-5 border-b border-slate-100 bg-linear-to-r from-blue-50/50 via-white to-indigo-50/50">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 bg-blue-500/10 text-blue-600 rounded-lg border border-blue-200">
+                    <Users className="w-4 h-4" />
+                  </div>
+                  <h3 className="text-sm sm:text-base font-bold text-slate-900 tracking-tight flex items-center gap-2">
+                    <span>Эффективность администраторов салона «Лик 28»</span>
+                    {isComparative ? (
+                      <span className="text-[10px] font-semibold uppercase px-2 py-0.5 rounded-md bg-indigo-100 text-indigo-800 border border-indigo-200">
+                        Сравнительный аудит
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-semibold uppercase px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200">
+                        Текущий период
+                      </span>
+                    )}
+                  </h3>
+                </div>
+                <p className="text-xs text-slate-500 mt-1">
+                  {isComparative
+                    ? `Сравнение показателей администраторов за текущий период (${startDate} — ${endDate}) и предыдущий (${prevStartDate} — ${prevEndDate}).`
+                    : `Индивидуальные показатели конверсии в запись, среднего балла качества и спорных ситуаций за выбранный период.`}
+                </p>
+              </div>
+              <div className="text-xs text-slate-500 font-mono self-start sm:self-auto">
+                Всего операторов: <strong className="text-slate-800">{operatorsData.length}</strong>
+              </div>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50/80 border-b border-slate-200 text-slate-600 font-semibold uppercase tracking-wider text-[11px]">
+                <tr>
+                  <th className="py-3 px-4">Администратор</th>
+                  <th className="py-3 px-4">Звонки {isComparative ? '(тек. / пред.)' : ''}</th>
+                  <th className="py-3 px-4">Записи клиентов</th>
+                  <th className="py-3 px-4">Конверсия в запись {isComparative ? 'Δ' : ''}</th>
+                  <th className="py-3 px-4">Ср. балл качества {isComparative ? 'Δ' : ''}</th>
+                  <th className="py-3 px-4 text-center">Споры</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {operatorsData.map((op, idx) => {
+                  const callsDelta = isComparative ? calcDelta(op.totalCalls, op.prevTotalCalls) : null;
+                  const convDelta = isComparative ? calcDelta(op.conversionRate, op.prevConversionRate, true) : null;
+                  const scoreDelta = isComparative && op.avgScore !== null && op.prevAvgScore !== null && op.prevAvgScore !== undefined
+                    ? calcDelta(op.avgScore, op.prevAvgScore)
+                    : null;
+
+                  return (
+                    <tr key={op.name} className="hover:bg-slate-50/60 transition-colors">
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-2">
+                          <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                            idx === 0 ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-600'
+                          }`}>
+                            {idx + 1}
+                          </span>
+                          <span className="font-bold text-slate-900">{op.name}</span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 font-mono">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-bold text-slate-800">{op.totalCalls}</span>
+                          {isComparative && (
+                            <span className="text-slate-400 text-[11px]">
+                              / {op.prevTotalCalls || 0}
+                            </span>
+                          )}
+                          {callsDelta && callsDelta.hasPrev && (
+                            <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${
+                              callsDelta.isGood ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'
+                            }`}>
+                              {callsDelta.text}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 font-mono font-semibold text-emerald-700">
+                        {op.bookedCount} записей
+                      </td>
+                      <td className="py-3 px-4 font-mono">
+                        <div className="flex items-center gap-1.5">
+                          <span className={`font-bold ${op.conversionRate >= 30 ? 'text-emerald-700' : 'text-slate-700'}`}>
+                            {op.conversionRate}%
+                          </span>
+                          {convDelta && convDelta.hasPrev && (
+                            <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${
+                              convDelta.isGood ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'
+                            }`}>
+                              {convDelta.text}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 font-mono">
+                        <div className="flex items-center gap-1.5">
+                          {op.avgScore !== null ? (
+                            <>
+                              <span className={`font-bold px-2 py-0.5 rounded-full text-xs ${
+                                op.avgScore >= 8 ? 'bg-emerald-100 text-emerald-800' : op.avgScore >= 6 ? 'bg-amber-100 text-amber-800' : 'bg-rose-100 text-rose-800'
+                              }`}>
+                                {op.avgScore} / 10
+                              </span>
+                              {scoreDelta && scoreDelta.hasPrev && (
+                                <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${
+                                  scoreDelta.isGood ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'
+                                }`}>
+                                  {scoreDelta.text}
+                                </span>
+                              )}
+                            </>
+                          ) : (
+                            <span className="text-slate-400 italic">нет данных</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 text-center font-mono">
+                        {op.disputes > 0 ? (
+                          <span className="font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
+                            {op.disputes}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400">0</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* ========================================================================= */}
       <div className="bg-white border border-slate-200/90 rounded-2xl shadow-xs overflow-hidden" id="call-activity-heatmap-card">
         {/* Section Header */}

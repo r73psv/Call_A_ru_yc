@@ -29,21 +29,99 @@ export function invalidateAuthorizedKeyCache(): void {
   iamTokenCache = null;
 }
 
-export function loadAuthorizedKey(): AuthorizedKey | null {
-  if (authorizedKey) return authorizedKey;
+export function parseKeyFromRawString(raw: string, explicitSaId?: string): AuthorizedKey | null {
+  if (!raw || typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
 
-  // 1. Check custom file path from admin panel store credentials
+  // A. JSON format
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed.private_key && (parsed.service_account_id || explicitSaId)) {
+        return {
+          id: parsed.id || 'default-key',
+          service_account_id: parsed.service_account_id || explicitSaId || '',
+          private_key: parsed.private_key,
+          public_key: parsed.public_key,
+        };
+      }
+    } catch {}
+  }
+
+  // B. PEM format or text with Key ID
+  if (trimmed.includes('BEGIN PRIVATE KEY') || trimmed.includes('BEGIN RSA PRIVATE KEY')) {
+    const keyIdMatch = trimmed.match(/<([a-zA-Z0-9_-]+)>/) || trimmed.match(/id\s*[:=]\s*([a-zA-Z0-9_-]+)/i);
+    const keyId = keyIdMatch ? keyIdMatch[1] : 'default-key';
+
+    const privMatch = trimmed.match(/-----BEGIN (?:RSA )?PRIVATE KEY-----[\s\S]+?-----END (?:RSA )?PRIVATE KEY-----/);
+    if (!privMatch) return null;
+
+    // Normalize PEM formatting with proper 64-char lines
+    const rawBody = privMatch[0]
+      .replace(/-----BEGIN (?:RSA )?PRIVATE KEY-----/, '')
+      .replace(/-----END (?:RSA )?PRIVATE KEY-----/, '')
+      .replace(/\s+/g, '');
+    const cleanPem = `-----BEGIN PRIVATE KEY-----\n${rawBody.match(/.{1,64}/g)?.join('\n')}\n-----END PRIVATE KEY-----`;
+
+    const pubMatch = trimmed.match(/-----BEGIN PUBLIC KEY-----[\s\S]+?-----END PUBLIC KEY-----/);
+    let cleanPub: string | undefined;
+    if (pubMatch) {
+      const pubBody = pubMatch[0]
+        .replace(/-----BEGIN PUBLIC KEY-----/, '')
+        .replace(/-----END PUBLIC KEY-----/, '')
+        .replace(/\s+/g, '');
+      cleanPub = `-----BEGIN PUBLIC KEY-----\n${pubBody.match(/.{1,64}/g)?.join('\n')}\n-----END PUBLIC KEY-----`;
+    }
+
+    const saIdMatch = trimmed.match(/SA(?:_|\s+)?ID\s*[:=<\s]+([a-zA-Z0-9_-]+)/i) ||
+      trimmed.match(/service[_-]?account[_-]?id\s*[:=<\s]+([a-zA-Z0-9_-]+)/i);
+    const saId = explicitSaId || (saIdMatch ? saIdMatch[1] : '') || process.env.YC_SERVICE_ACCOUNT_ID || '';
+
+    return {
+      id: keyId,
+      service_account_id: saId,
+      private_key: cleanPem,
+      public_key: cleanPub,
+    };
+  }
+
+  return null;
+}
+
+export function loadAuthorizedKey(): AuthorizedKey | null {
+  if (authorizedKey && authorizedKey.private_key && authorizedKey.service_account_id) {
+    return authorizedKey;
+  }
+
+  let storeSaId: string | undefined;
+  try {
+    const store = readStoreSync();
+    storeSaId = store.config?.credentials?.yandexServiceAccountId;
+  } catch {}
+
+  // 1. Check custom file path or inline string from store credentials
   try {
     const store = readStoreSync();
     const customFilePath = store.config?.credentials?.yandexServiceAccountKeyFile;
-    if (customFilePath && fs.existsSync(customFilePath)) {
-      try {
-        const raw = fs.readFileSync(customFilePath, 'utf-8');
-        authorizedKey = JSON.parse(raw);
-        console.log(`[Yandex Auth] Авторизованный ключ успешно загружен из настроек пути: ${customFilePath}`);
-        return authorizedKey;
-      } catch (errCustom: any) {
-        console.warn(`[Yandex Auth] Ошибка парсинга файла ключа из настроек ${customFilePath}:`, errCustom.message);
+    if (customFilePath) {
+      if (customFilePath.length > 250 || customFilePath.includes('PRIVATE KEY') || customFilePath.includes('{')) {
+        const parsed = parseKeyFromRawString(customFilePath, storeSaId);
+        if (parsed && parsed.service_account_id) {
+          authorizedKey = parsed;
+          return authorizedKey;
+        }
+      } else if (fs.existsSync(customFilePath)) {
+        try {
+          const raw = fs.readFileSync(customFilePath, 'utf-8');
+          const parsed = parseKeyFromRawString(raw, storeSaId);
+          if (parsed) {
+            authorizedKey = parsed;
+            console.log(`[Yandex Auth] Авторизованный ключ успешно загружен из настроек пути: ${customFilePath}`);
+            return authorizedKey;
+          }
+        } catch (errCustom: any) {
+          console.warn(`[Yandex Auth] Ошибка парсинга файла ключа из настроек ${customFilePath}:`, errCustom.message);
+        }
       }
     }
   } catch (e) {
@@ -54,16 +132,31 @@ export function loadAuthorizedKey(): AuthorizedKey | null {
   try {
     const store = readStoreSync();
     if (store.config?.credentials?.yandexServiceAccountKeyJson) {
-      authorizedKey = JSON.parse(store.config.credentials.yandexServiceAccountKeyJson);
-      return authorizedKey;
+      const parsed = parseKeyFromRawString(store.config.credentials.yandexServiceAccountKeyJson, storeSaId);
+      if (parsed) {
+        authorizedKey = parsed;
+        return authorizedKey;
+      }
     }
   } catch (e) {
     // ignore
   }
 
   // 3. Check environment file path or default container keys path
+  const envVal = process.env.YC_SERVICE_ACCOUNT_KEY_FILE;
+  if (envVal) {
+    // If env variable is raw key text rather than a real path:
+    if (envVal.length > 250 || envVal.includes('PRIVATE KEY') || envVal.includes('{')) {
+      const parsed = parseKeyFromRawString(envVal, storeSaId);
+      if (parsed && parsed.service_account_id) {
+        authorizedKey = parsed;
+        return authorizedKey;
+      }
+    }
+  }
+
   const candidatePaths = [
-    process.env.YC_SERVICE_ACCOUNT_KEY_FILE,
+    envVal && envVal.length < 250 && !envVal.includes('\n') ? envVal : null,
     '/app/keys/authorized_key.json',
     path.join(process.cwd(), 'keys', 'authorized_key.json'),
     path.join(process.cwd(), 'authorized_key.json'),
@@ -73,9 +166,12 @@ export function loadAuthorizedKey(): AuthorizedKey | null {
     if (fs.existsSync(keyPath)) {
       try {
         const raw = fs.readFileSync(keyPath, 'utf-8');
-        authorizedKey = JSON.parse(raw);
-        console.log(`[Yandex Auth] Авторизованный ключ успешно загружен из ${keyPath}`);
-        return authorizedKey;
+        const parsed = parseKeyFromRawString(raw, storeSaId);
+        if (parsed) {
+          authorizedKey = parsed;
+          console.log(`[Yandex Auth] Авторизованный ключ успешно загружен из ${keyPath}`);
+          return authorizedKey;
+        }
       } catch (e: any) {
         console.warn(`[Yandex Auth] Ошибка парсинга файла ключа ${keyPath}:`, e.message);
       }
@@ -85,8 +181,11 @@ export function loadAuthorizedKey(): AuthorizedKey | null {
   // 4. Check inline env variable if provided
   if (process.env.YC_SERVICE_ACCOUNT_KEY_JSON) {
     try {
-      authorizedKey = JSON.parse(process.env.YC_SERVICE_ACCOUNT_KEY_JSON);
-      return authorizedKey;
+      const parsed = parseKeyFromRawString(process.env.YC_SERVICE_ACCOUNT_KEY_JSON, storeSaId);
+      if (parsed) {
+        authorizedKey = parsed;
+        return authorizedKey;
+      }
     } catch (e: any) {
       console.warn('[Yandex Auth] Ошибка парсинга YC_SERVICE_ACCOUNT_KEY_JSON:', e.message);
     }
@@ -148,16 +247,15 @@ export function getAuthorizedKeyInfo(): {
       } catch {}
     }
 
-    if (process.env.YC_SERVICE_ACCOUNT_KEY_JSON) {
-      try {
-        const parsed = JSON.parse(process.env.YC_SERVICE_ACCOUNT_KEY_JSON);
-        return {
-          configured: true,
-          serviceAccountId: parsed.service_account_id,
-          keyId: parsed.id,
-          source: 'env_json',
-        };
-      } catch {}
+    const key = loadAuthorizedKey();
+    if (key && (key.service_account_id || key.id)) {
+      return {
+        configured: true,
+        serviceAccountId: key.service_account_id,
+        keyId: key.id,
+        source: 'authorized_key',
+        filePath: '/app/keys/authorized_key.json',
+      };
     }
   } catch {}
 
@@ -165,6 +263,7 @@ export function getAuthorizedKeyInfo(): {
 }
 
 export async function createJwt(): Promise<string> {
+
   const key = loadAuthorizedKey();
   if (!key) {
     throw new Error('Авторизованный ключ Yandex Cloud не найден (YC_SERVICE_ACCOUNT_KEY_FILE)');
@@ -255,3 +354,82 @@ export function isYandexAuthConfigured(): boolean {
   if (getYandexApiKey()) return true;
   return !!loadAuthorizedKey();
 }
+
+export async function testYandexSpeechKit(
+  apiKeyOverride?: string,
+  folderIdOverride?: string
+): Promise<{ success: boolean; message: string; authType: string; folderId?: string }> {
+  const apiKey = apiKeyOverride || getYandexApiKey();
+  const folderId = folderIdOverride || getYandexFolderId();
+
+  let authHeader = '';
+  let authType = 'api_key';
+
+  if (apiKey) {
+    authHeader = `Api-Key ${apiKey.trim()}`;
+    authType = 'api_key';
+  } else {
+    try {
+      const iamToken = await getIamToken();
+      authHeader = `Bearer ${iamToken}`;
+      authType = 'iam_token';
+    } catch (e: any) {
+      throw new Error(`Ошибка генерации IAM-токена: ${e.message}`);
+    }
+  }
+
+  // Make a real test request to SpeechKit API with an Opus header
+  try {
+    const query = new URLSearchParams({
+      lang: 'ru-RU',
+      topic: 'general',
+      format: 'oggopus',
+    });
+    if (folderId) {
+      query.set('folderId', folderId.trim());
+    }
+
+    const testAudio = Buffer.alloc(64);
+    await axios.post(
+      `https://stt.api.cloud.yandex.net/speech/v1/stt:recognize?${query.toString()}`,
+      testAudio,
+      {
+        headers: {
+          Authorization: authHeader,
+          'Content-Type': 'application/octet-stream',
+        },
+        timeout: 10000,
+      }
+    );
+
+    return {
+      success: true,
+      message: authType === 'api_key'
+        ? 'Постоянный API-ключ Yandex Cloud успешно проверен и подтверждён сервером SpeechKit!'
+        : 'IAM-токен сервисного аккаунта успешно подтверждён сервером SpeechKit!',
+      authType,
+      folderId: folderId || '(не указан)',
+    };
+  } catch (err: any) {
+    if (err.response?.status === 401 || err.response?.status === 403) {
+      let detail = err.response?.data?.error_message || err.response?.data?.message || 'Неверный ключ или отсутствует доступ к SpeechKit';
+      if (apiKey && apiKey.startsWith('aje')) {
+        detail = `Внимание: введен идентификатор ключа (${apiKey}), а не секретный API-ключ. Секретный API-ключ Yandex Cloud начинается на AQVN... и отображается в окне создания ключа один раз. Скопируйте секретный ключ или загрузите authorized_key.json.`;
+      }
+      throw new Error(`Ошибка авторизации Yandex Cloud (${err.response.status}): ${detail}`);
+    }
+    // Any 400 Bad Request regarding audio data means authentication SUCCEEDED (it passed auth check)!
+    if (err.response?.status === 400) {
+      return {
+        success: true,
+        message: authType === 'api_key'
+          ? 'Постоянный API-ключ Yandex Cloud проверен и активен на сервере SpeechKit!'
+          : 'IAM-токен сервисного аккаунта проверен и активен на сервере SpeechKit!',
+        authType,
+        folderId: folderId || '(не указан)',
+      };
+    }
+    throw new Error(err.response?.data?.message || err.message);
+  }
+}
+

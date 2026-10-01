@@ -14,7 +14,7 @@ import { readStore, writeStore } from '../store/store.js';
 import { requireRole, logAccess, getCurrentUser } from './auth.js';
 import { hashPassword, verifyPassword } from '../store/user-store.js';
 import { invalidateGigaChatTokenCache } from '../services/gigachat-auth.js';
-import { invalidateAuthorizedKeyCache, getAuthorizedKeyInfo, getIamToken } from '../services/yandex-auth.js';
+import { invalidateAuthorizedKeyCache, getAuthorizedKeyInfo, getIamToken, testYandexSpeechKit } from '../services/yandex-auth.js';
 import { setStoreEncryptionKey, isStoreEncryptionKeyConfigured } from '../store/crypto-store.js';
 import { scanTempFiles, cleanTempFiles, runCleanupNow } from '../store/cleanup.js';
 import { SystemCredentials, GigaChatModel, AutoCleanupSettings, LogEntry } from '../types.js';
@@ -34,6 +34,10 @@ adminRouter.get('/credentials', async (req: Request, res: Response) => {
     const creds: SystemCredentials = store.config.credentials || {};
 
     const keyInfo = getAuthorizedKeyInfo();
+    const rawKeyPath = creds.yandexServiceAccountKeyFile || process.env.YC_SERVICE_ACCOUNT_KEY_FILE || '';
+    const cleanKeyPath = rawKeyPath.length > 200 || rawKeyPath.includes('\n')
+      ? (keyInfo.filePath || '/app/keys/authorized_key.json')
+      : (rawKeyPath || '/app/keys/authorized_key.json');
 
     res.json({
       // GigaChat
@@ -45,10 +49,12 @@ adminRouter.get('/credentials', async (req: Request, res: Response) => {
       // Yandex SpeechKit
       yandexApiKey: creds.yandexApiKey || process.env.YC_API_KEY || '',
       yandexFolderId: creds.yandexFolderId || process.env.YC_FOLDER_ID || '',
-      yandexServiceAccountKeyFile: creds.yandexServiceAccountKeyFile || process.env.YC_SERVICE_ACCOUNT_KEY_FILE || (keyInfo.filePath || '/app/keys/authorized_key.json'),
+      yandexServiceAccountId: creds.yandexServiceAccountId || process.env.YC_SERVICE_ACCOUNT_ID || keyInfo.serviceAccountId || '',
+      yandexServiceAccountKeyFile: cleanKeyPath,
       yandexServiceAccountKeyJson: creds.yandexServiceAccountKeyJson || process.env.YC_SERVICE_ACCOUNT_KEY_JSON || '',
       yandexKeyInfo: keyInfo,
-      yandexConfigured: !!(keyInfo.configured || creds.yandexApiKey || process.env.YC_API_KEY || creds.yandexServiceAccountKeyFile || creds.yandexServiceAccountKeyJson),
+      yandexConfigured: !!(keyInfo.configured || creds.yandexApiKey || process.env.YC_API_KEY),
+      geminiConfigured: !!process.env.GEMINI_API_KEY,
 
       // 152-ФЗ Ключ шифрования БД и ПДн
       storeEncryptionKey: creds.storeEncryptionKey || process.env.STORE_ENCRYPTION_KEY || '',
@@ -81,7 +87,7 @@ adminRouter.get('/credentials', async (req: Request, res: Response) => {
       megafonWebhookUrl: store.config.megafon.webhookUrl || '/api/calls/webhook',
       megafonAutoImport: store.config.megafon.autoImport !== false,
       megafonPollingEnabled: !!store.config.megafon.pollingEnabled,
-      megafonPollingIntervalMinutes: store.config.megafon.pollingIntervalMinutes || 5,
+      megafonPollingIntervalMinutes: store.config.megafon.pollingIntervalMinutes || 15,
 
       // VK
       vkToken: creds.vkToken || store.config.vk.token || '',
@@ -221,10 +227,18 @@ adminRouter.post('/credentials', async (req: Request, res: Response) => {
     }
 
     // 2. Yandex SpeechKit
-    if (body.yandexApiKey !== undefined) creds.yandexApiKey = String(body.yandexApiKey).trim();
+    if (body.yandexApiKey !== undefined) {
+      creds.yandexApiKey = String(body.yandexApiKey).trim();
+      process.env.YC_API_KEY = creds.yandexApiKey;
+    }
     if (body.yandexFolderId !== undefined) {
       creds.yandexFolderId = String(body.yandexFolderId).trim();
       process.env.YC_FOLDER_ID = creds.yandexFolderId;
+    }
+    if (body.yandexServiceAccountId !== undefined) {
+      creds.yandexServiceAccountId = String(body.yandexServiceAccountId).trim();
+      process.env.YC_SERVICE_ACCOUNT_ID = creds.yandexServiceAccountId;
+      invalidateAuthorizedKeyCache();
     }
     if (body.yandexServiceAccountKeyFile !== undefined) {
       creds.yandexServiceAccountKeyFile = String(body.yandexServiceAccountKeyFile).trim();
@@ -315,10 +329,15 @@ adminRouter.post('/credentials', async (req: Request, res: Response) => {
     }
     if (body.megafonWebhookUrl !== undefined) store.config.megafon.webhookUrl = String(body.megafonWebhookUrl).trim();
     if (body.megafonAutoImport !== undefined) store.config.megafon.autoImport = Boolean(body.megafonAutoImport);
-    if (body.megafonPollingEnabled !== undefined) store.config.megafon.pollingEnabled = Boolean(body.megafonPollingEnabled);
+    if (body.megafonPollingEnabled !== undefined) {
+      store.config.megafon.pollingEnabled = Boolean(body.megafonPollingEnabled);
+      if (store.config.megafon.pollingEnabled) {
+        store.config.megafon.active = true;
+      }
+    }
     if (body.megafonPollingIntervalMinutes !== undefined) {
       const parsed = parseInt(String(body.megafonPollingIntervalMinutes), 10);
-      store.config.megafon.pollingIntervalMinutes = isNaN(parsed) ? 5 : Math.max(1, parsed);
+      store.config.megafon.pollingIntervalMinutes = isNaN(parsed) ? 15 : Math.max(1, parsed);
     }
 
     // 5. VK
@@ -498,40 +517,20 @@ adminRouter.post('/test/yandex', async (req: Request, res: Response) => {
   try {
     const store = await readStore();
     const creds = store.config.credentials || {};
-    const apiKey = req.body.apiKey || creds.yandexApiKey || process.env.YC_API_KEY;
-    const folderId = req.body.folderId || creds.yandexFolderId || process.env.YC_FOLDER_ID;
+    const apiKey = req.body.apiKey !== undefined && req.body.apiKey !== ''
+      ? req.body.apiKey
+      : (creds.yandexApiKey || process.env.YC_API_KEY);
+    const folderId = req.body.folderId !== undefined && req.body.folderId !== ''
+      ? req.body.folderId
+      : (creds.yandexFolderId || process.env.YC_FOLDER_ID);
 
-    // 1. If API Key provided
-    if (apiKey) {
-      return res.json({
-        success: true,
-        message: 'Используется постоянный API-ключ Yandex Cloud. Авторизация активна.',
-        authType: 'api_key',
-        folderId: folderId || '(не указан)',
-      });
-    }
-
-    // 2. Try getting IAM Token from authorized_key.json
-    try {
-      await getIamToken();
-      const keyInfo = getAuthorizedKeyInfo();
-      return res.json({
-        success: true,
-        message: `IAM-токен успешно сгенерирован и подтверждён через authorized_key.json (SA: ${keyInfo.serviceAccountId || 'активен'})`,
-        authType: 'iam_token',
-        serviceAccountId: keyInfo.serviceAccountId,
-        keyId: keyInfo.keyId,
-        filePath: keyInfo.filePath,
-        folderId: folderId || '(не указан)',
-      });
-    } catch (iamErr: any) {
-      return res.status(400).json({
-        success: false,
-        error: `Ошибка авторизации Yandex Cloud: ${iamErr.message}. Загрузите authorized_key.json или укажите API-ключ.`,
-      });
-    }
+    const testRes = await testYandexSpeechKit(apiKey, folderId);
+    return res.json(testRes);
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    return res.status(400).json({
+      success: false,
+      error: `Ошибка проверки SpeechKit: ${err.message}`,
+    });
   }
 });
 

@@ -43,6 +43,8 @@ export function CredentialsSettings({ authToken }: CredentialsSettingsProps) {
   // Yandex SpeechKit & IAM Authorized Key
   const [yandexApiKey, setYandexApiKey] = useState('');
   const [yandexFolderId, setYandexFolderId] = useState('');
+  const [yandexServiceAccountId, setYandexServiceAccountId] = useState('');
+  const [geminiConfigured, setGeminiConfigured] = useState(false);
   const [yandexServiceAccountKeyFile, setYandexServiceAccountKeyFile] = useState('/app/keys/authorized_key.json');
   const [yandexServiceAccountKeyJson, setYandexServiceAccountKeyJson] = useState('');
   const [yandexKeyInfo, setYandexKeyInfo] = useState<{
@@ -86,7 +88,7 @@ export function CredentialsSettings({ authToken }: CredentialsSettingsProps) {
   const [megafonWebhookUrl, setMegafonWebhookUrl] = useState('/api/calls/webhook');
   const [megafonAutoImport, setMegafonAutoImport] = useState(true);
   const [megafonPollingEnabled, setMegafonPollingEnabled] = useState(false);
-  const [megafonPollingIntervalMinutes, setMegafonPollingIntervalMinutes] = useState(5);
+  const [megafonPollingIntervalMinutes, setMegafonPollingIntervalMinutes] = useState(15);
 
   // Период ручного опроса Мегафон
   const [fromDate, setFromDate] = useState(() => {
@@ -146,6 +148,8 @@ export function CredentialsSettings({ authToken }: CredentialsSettingsProps) {
 
       setYandexApiKey(data.yandexApiKey || '');
       setYandexFolderId(data.yandexFolderId || '');
+      setYandexServiceAccountId(data.yandexServiceAccountId || '');
+      setGeminiConfigured(!!data.geminiConfigured);
       setYandexServiceAccountKeyFile(data.yandexServiceAccountKeyFile || '/app/keys/authorized_key.json');
       setYandexServiceAccountKeyJson(data.yandexServiceAccountKeyJson || '');
       if (data.yandexKeyInfo) {
@@ -173,7 +177,7 @@ export function CredentialsSettings({ authToken }: CredentialsSettingsProps) {
       setMegafonWebhookUrl(data.megafonWebhookUrl || '/api/calls/webhook');
       setMegafonAutoImport(data.megafonAutoImport !== false);
       setMegafonPollingEnabled(!!data.megafonPollingEnabled);
-      setMegafonPollingIntervalMinutes(data.megafonPollingIntervalMinutes || 5);
+      setMegafonPollingIntervalMinutes(data.megafonPollingIntervalMinutes || 15);
 
       setVkToken(data.vkToken || '');
       setVkChatId(data.vkChatId || '');
@@ -228,6 +232,7 @@ export function CredentialsSettings({ authToken }: CredentialsSettingsProps) {
         storeEncryptionKey,
         yandexApiKey,
         yandexFolderId,
+        yandexServiceAccountId,
         yandexServiceAccountKeyFile,
         yandexServiceAccountKeyJson,
         yandexStorageBucket,
@@ -708,47 +713,78 @@ export function CredentialsSettings({ authToken }: CredentialsSettingsProps) {
               </div>
               <div>
                 <h4 className="font-bold text-slate-900 text-xs">Yandex SpeechKit (Распознавание речи)</h4>
-                <p className="text-[11px] text-slate-500">Сервисный аккаунт IAM • authorized_key.json • 2-канальная транскрибация</p>
+                <p className="text-[11px] text-slate-500">API-ключ или сервисный аккаунт IAM • 2-канальная транскрибация</p>
               </div>
             </div>
-            <span className="text-[10px] bg-red-100 text-red-800 font-bold px-2 py-0.5 rounded-full">
-              Российское облако
-            </span>
+            <div className="flex items-center gap-1.5">
+              {geminiConfigured && (
+                <span className="text-[10px] bg-blue-50 text-blue-700 font-bold px-2 py-0.5 rounded-full border border-blue-200">
+                  Резерв Gemini активен
+                </span>
+              )}
+              <span className="text-[10px] bg-red-100 text-red-800 font-bold px-2 py-0.5 rounded-full">
+                Российское облако
+              </span>
+            </div>
           </div>
 
-          {/* Folder ID */}
-          <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1">
-              Идентификатор каталога (Folder ID)*
-            </label>
+          {/* 1. Постоянный API-ключ Yandex Cloud (Основной / Рекомендуемый способ) */}
+          <div className="p-3 bg-red-50/50 rounded-xl border border-red-100 space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="block text-xs font-bold text-slate-800">
+                Постоянный API-ключ Yandex Cloud (YC_API_KEY)
+              </label>
+              <span className="text-[10px] text-red-700 font-semibold bg-red-100/80 px-2 py-0.5 rounded">
+                Рекомендуемый способ
+              </span>
+            </div>
             <input
-              type="text"
-              value={yandexFolderId}
-              onChange={(e) => setYandexFolderId(e.target.value)}
-              placeholder="b1g..."
-              className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono focus:ring-2 focus:ring-red-500 focus:bg-white focus:outline-hidden"
-              id="yandex-folder-id-input"
+              type={showKeys ? 'text' : 'password'}
+              value={yandexApiKey}
+              onChange={(e) => setYandexApiKey(e.target.value)}
+              placeholder="AQVN..."
+              className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-mono focus:ring-2 focus:ring-red-500 focus:bg-white focus:outline-hidden"
+              id="yandex-api-key-input"
             />
-            <p className="text-[10px] text-slate-400 mt-1">
-              Идентификатор каталога в Yandex Cloud (например: b1gv4k2...)
+            <p className="text-[10px] text-slate-500">
+              Постоянный ключ для доступа к Yandex SpeechKit. Создаётся в консоли Yandex Cloud (Сервисные аккаунты → Создать API-ключ).
+              <span className="block mt-0.5 text-amber-700 font-medium">Важно: копируйте именно <b>Секретный ключ</b> (начинается на AQVN...), а не Идентификатор ключа (aje...).</span>
             </p>
           </div>
 
-          {/* Путь к файлу authorized_key.json */}
-          <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1">
-              Путь к файлу ключа authorized_key.json*
-            </label>
-            <div className="relative">
+          {/* Folder ID & Service Account ID */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Идентификатор каталога (Folder ID)
+              </label>
               <input
                 type="text"
-                value={yandexServiceAccountKeyFile}
-                onChange={(e) => setYandexServiceAccountKeyFile(e.target.value)}
-                placeholder="/app/keys/authorized_key.json"
-                className="w-full px-3 py-2 pl-8 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono focus:ring-2 focus:ring-red-500 focus:bg-white focus:outline-hidden"
-                id="yandex-key-file-input"
+                value={yandexFolderId}
+                onChange={(e) => setYandexFolderId(e.target.value)}
+                placeholder="b1g..."
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono focus:ring-2 focus:ring-red-500 focus:bg-white focus:outline-hidden"
+                id="yandex-folder-id-input"
               />
-              <Folder className="w-4 h-4 text-slate-400 absolute left-2.5 top-2.5" />
+              <p className="text-[10px] text-slate-400 mt-1">
+                Каталог в Yandex Cloud (например: b1gv4k2...)
+              </p>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Идентификатор сервисного аккаунта (SA ID)
+              </label>
+              <input
+                type="text"
+                value={yandexServiceAccountId}
+                onChange={(e) => setYandexServiceAccountId(e.target.value)}
+                placeholder="aje..."
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono focus:ring-2 focus:ring-red-500 focus:bg-white focus:outline-hidden"
+                id="yandex-sa-id-input"
+              />
+              <p className="text-[10px] text-slate-400 mt-1">
+                ID сервисного аккаунта (для IAM-токенов)
+              </p>
             </div>
           </div>
 
@@ -757,7 +793,7 @@ export function CredentialsSettings({ authToken }: CredentialsSettingsProps) {
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                 <Upload className="w-3.5 h-3.5 text-red-600" />
-                Загрузка файла authorized_key.json
+                Авторизованный ключ authorized_key.json
               </span>
               <label className="cursor-pointer px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs flex items-center gap-1.5">
                 <FileCode className="w-3.5 h-3.5" />
@@ -778,7 +814,7 @@ export function CredentialsSettings({ authToken }: CredentialsSettingsProps) {
             </div>
 
             <p className="text-[11px] text-slate-500 leading-relaxed">
-              Скачайте авторизованный ключ сервисного аккаунта в консоли Yandex Cloud и загрузите сюда. Файл безопасно сохраняется с правами доступа 0600.
+              Альтернатива: загрузите JSON-файл ключа сервисного аккаунта для автоматической генерации IAM-токенов.
             </p>
 
             {/* Статус авторизованного ключа */}
@@ -798,16 +834,11 @@ export function CredentialsSettings({ authToken }: CredentialsSettingsProps) {
                     Key ID: {yandexKeyInfo.keyId}
                   </div>
                 )}
-                {yandexKeyInfo.filePath && (
-                  <div className="font-mono text-[10px] text-slate-500 truncate">
-                    Файл: {yandexKeyInfo.filePath} {yandexKeyInfo.fileSizeBytes ? `(${yandexKeyInfo.fileSizeBytes} B)` : ''}
-                  </div>
-                )}
               </div>
             ) : (
-              <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-900 flex items-start gap-2">
-                <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
-                <span>Файл authorized_key.json пока не загружен на сервер. Загрузите ключ для генерации IAM-токенов.</span>
+              <div className="p-2.5 bg-slate-100 border border-slate-200 rounded-lg text-[11px] text-slate-600 flex items-start gap-2">
+                <AlertTriangle className="w-3.5 h-3.5 text-slate-500 shrink-0 mt-0.5" />
+                <span>Если вы используете постоянный API-ключ (выше), загрузка authorized_key.json не требуется.</span>
               </div>
             )}
 
@@ -816,6 +847,24 @@ export function CredentialsSettings({ authToken }: CredentialsSettingsProps) {
                 {yandexUploadResult.msg}
               </div>
             )}
+          </div>
+
+          {/* Путь к файлу authorized_key.json */}
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1">
+              Путь к файлу ключа authorized_key.json на сервере
+            </label>
+            <div className="relative">
+              <input
+                type="text"
+                value={yandexServiceAccountKeyFile}
+                onChange={(e) => setYandexServiceAccountKeyFile(e.target.value)}
+                placeholder="/app/keys/authorized_key.json"
+                className="w-full px-3 py-2 pl-8 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono focus:ring-2 focus:ring-red-500 focus:bg-white focus:outline-hidden"
+                id="yandex-key-file-input"
+              />
+              <Folder className="w-4 h-4 text-slate-400 absolute left-2.5 top-2.5" />
+            </div>
           </div>
 
           {/* Кнопка проверки авторизации Yandex Cloud */}
@@ -845,31 +894,17 @@ export function CredentialsSettings({ authToken }: CredentialsSettingsProps) {
               className="text-[11px] text-slate-500 hover:text-slate-700 flex items-center gap-1 font-medium"
             >
               {showAdvancedYandex ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-              {showAdvancedYandex ? 'Скрыть дополнительные настройки Yandex' : 'Дополнительные настройки (API-ключ / RAW JSON)'}
+              {showAdvancedYandex ? 'Скрыть дополнительные настройки' : 'Вставка RAW JSON авторизованного ключа'}
             </button>
 
             {showAdvancedYandex && (
               <div className="space-y-3 mt-3 pt-3 border-t border-slate-100">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Постоянный API-ключ Yandex Cloud (YC_API_KEY)
-                  </label>
-                  <input
-                    type={showKeys ? 'text' : 'password'}
-                    value={yandexApiKey}
-                    onChange={(e) => setYandexApiKey(e.target.value)}
-                    placeholder="AQVN..."
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono focus:ring-2 focus:ring-red-500 focus:bg-white focus:outline-hidden"
-                  />
-                  <p className="text-[10px] text-slate-400 mt-0.5">Используется как альтернатива IAM токенам</p>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
                     JSON авторизованного ключа (вставка содержимого)
                   </label>
                   <textarea
-                    rows={2}
+                    rows={3}
                     value={yandexServiceAccountKeyJson}
                     onChange={(e) => setYandexServiceAccountKeyJson(e.target.value)}
                     placeholder='{"id": "...", "service_account_id": "...", "private_key": "..."}'
@@ -1274,6 +1309,72 @@ export function CredentialsSettings({ authToken }: CredentialsSettingsProps) {
               placeholder="Токен из раздела интеграции АТС Мегафон"
               className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono"
             />
+          </div>
+
+          {/* Настройка автоопроса АТС и регулировка интервала */}
+          <div className="p-3.5 bg-emerald-50/70 rounded-xl border border-emerald-200 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <label className="flex items-center gap-2 text-xs font-bold text-slate-800 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={megafonPollingEnabled}
+                  onChange={(e) => setMegafonPollingEnabled(e.target.checked)}
+                  className="rounded-sm text-emerald-600 focus:ring-emerald-500 w-4 h-4"
+                  id="megafon-auto-poll-checkbox"
+                />
+                <span>Автоматический опрос АТС Мегафон</span>
+              </label>
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                megafonPollingEnabled ? 'bg-emerald-200 text-emerald-800' : 'bg-slate-200 text-slate-600'
+              }`}>
+                {megafonPollingEnabled ? 'Включен' : 'Выключен'}
+              </span>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-emerald-600" />
+                  Интервал автоопроса АТС:
+                </label>
+                <span className="text-xs font-bold text-emerald-700 font-mono">
+                  {megafonPollingIntervalMinutes} мин.
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    min="1"
+                    max="1440"
+                    value={megafonPollingIntervalMinutes}
+                    onChange={(e) => setMegafonPollingIntervalMinutes(Math.max(1, parseInt(e.target.value, 10) || 15))}
+                    className="w-20 px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-800 focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
+                    id="megafon-polling-interval-input"
+                  />
+                  <span className="text-xs text-slate-500 font-medium">мин.</span>
+                </div>
+                <div className="flex flex-wrap items-center gap-1">
+                  {[5, 10, 15, 30, 60].map((mins) => (
+                    <button
+                      key={mins}
+                      type="button"
+                      onClick={() => setMegafonPollingIntervalMinutes(mins)}
+                      className={`px-2.5 py-1 text-[11px] rounded-lg font-semibold transition-all ${
+                        megafonPollingIntervalMinutes === mins
+                          ? 'bg-emerald-600 text-white shadow-3xs'
+                          : 'bg-white hover:bg-emerald-100 text-slate-700 border border-slate-200'
+                      }`}
+                    >
+                      {mins} мин{mins === 15 ? ' (рек.)' : ''}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <p className="text-[10px] text-slate-500 mt-1.5 leading-relaxed">
+                Сервер автоматически обращается к API АТС Мегафон каждые {megafonPollingIntervalMinutes} мин. и загружает новые поступившие звонки.
+              </p>
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3">

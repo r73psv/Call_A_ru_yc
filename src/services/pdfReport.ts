@@ -347,3 +347,372 @@ export function generateCallAuditPdf(call: CallRecord, userRole: string = 'manag
 
   return doc;
 }
+
+export interface PeriodStatsReportData {
+  periodTitle: string;
+  periodDates: string;
+  isComparative: boolean;
+  comparePeriodTitle?: string;
+  compareDates?: string;
+  currentStats: {
+    totalCalls: number;
+    incomingCalls: number;
+    outgoingCalls: number;
+    completedCalls: number;
+    missedCalls: number;
+    bookedCount: number;
+    declinedCount: number;
+    consultationCount: number;
+    conversionRate: number;
+    averageScore: number;
+    disputeCount: number;
+    disputeRate: number;
+    avgDurationSec: number;
+  };
+  previousStats?: {
+    totalCalls: number;
+    incomingCalls: number;
+    outgoingCalls: number;
+    completedCalls: number;
+    missedCalls: number;
+    bookedCount: number;
+    declinedCount: number;
+    consultationCount: number;
+    conversionRate: number;
+    averageScore: number;
+    disputeCount: number;
+    disputeRate: number;
+    avgDurationSec: number;
+  };
+  operators: Array<{
+    name: string;
+    totalCalls: number;
+    avgScore: number | null;
+    bookedCount: number;
+    conversionRate: number;
+    disputes: number;
+    prevAvgScore?: number | null;
+    prevConversionRate?: number;
+  }>;
+  hourlyPeakHours?: string;
+  userRole?: string;
+}
+
+/**
+ * Генерация комплексного PDF-отчета за период со сравнительным анализом
+ */
+export function generatePeriodStatsPdf(data: PeriodStatsReportData): InstanceType<typeof PDFDocument> {
+  const doc = new PDFDocument({
+    size: 'A4',
+    margin: 36,
+    bufferPages: true,
+    info: {
+      Title: `Сводный аналитический отчет — Салон «Лик 28» (${data.periodDates})`,
+      Author: 'Салон красоты «Лик 28» — Речевая аналитика',
+      Subject: 'Сводный отчет эффективности звонков и работы операторов за период',
+    },
+  });
+
+  const fonts = getFontPaths();
+  doc.registerFont('AppFont', fonts.regular);
+  doc.registerFont('AppFontBold', fonts.bold);
+
+  const pageWidth = 595.28;
+  const margin = 36;
+  const contentWidth = pageWidth - margin * 2; // 523.28
+
+  function ensureSpace(neededHeight: number) {
+    if (doc.y + neededHeight > doc.page.height - margin - 30) {
+      doc.addPage();
+    }
+  }
+
+  // 1. Header Banner
+  doc.rect(margin, margin, contentWidth, 54).fill('#0f172a');
+  doc.font('AppFontBold').fontSize(15).fillColor('#ffffff').text('САЛОН КРАСОТЫ «ЛИК 28»', margin + 14, margin + 11);
+  doc
+    .font('AppFont')
+    .fontSize(9)
+    .fillColor('#94a3b8')
+    .text('СВОДНЫЙ АНАЛИТИЧЕСКИЙ ОТЧЕТ И СРАВНИТЕЛЬНЫЙ АНАЛИЗ ЗВОНКОВ', margin + 14, margin + 32);
+
+  doc.y = margin + 64;
+
+  // 2. Info Strip
+  const nowSamara = new Date().toLocaleString('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Europe/Samara',
+  });
+
+  const infoY = doc.y;
+  doc.rect(margin, infoY, contentWidth, data.isComparative ? 44 : 32).fillAndStroke('#f8fafc', '#e2e8f0');
+
+  doc.font('AppFontBold').fontSize(8.5).fillColor('#1e293b').text(
+    `АНАЛИЗИРУЕМЫЙ ПЕРИОД: ${data.periodTitle.toUpperCase()} (${data.periodDates})`,
+    margin + 10,
+    infoY + 8
+  );
+
+  if (data.isComparative && data.compareDates) {
+    doc.font('AppFont').fontSize(8).fillColor('#0284c7').text(
+      `СРАВНЕНИЕ С ПЕРИОДОМ: ${data.comparePeriodTitle || 'Предыдущий период'} (${data.compareDates})`,
+      margin + 10,
+      infoY + 22
+    );
+  }
+
+  doc.font('AppFont').fontSize(7.5).fillColor('#64748b').text(
+    `Сформирован: ${nowSamara} (Самара, UTC+4) • 152-ФЗ РФ`,
+    margin + 10,
+    data.isComparative ? infoY + 33 : infoY + 20
+  );
+
+  doc.y = infoY + (data.isComparative ? 52 : 40);
+
+  // 3. KPI Summary Table
+  doc.font('AppFontBold').fontSize(11).fillColor('#0f172a').text('1. Ключевые показатели эффективности (KPI)');
+  doc.moveDown(0.3);
+
+  const cur = data.currentStats;
+  const prev = data.previousStats;
+
+  interface KpiRow {
+    label: string;
+    curVal: string;
+    prevVal?: string;
+    delta?: string;
+    isPositiveGood?: boolean;
+    isGood?: boolean;
+  }
+
+  function calcDelta(curN: number, prevN?: number, isPercent = false, invert = false): { text: string; isGood: boolean } {
+    if (prevN === undefined || prevN === null || prevN === 0 && curN === 0) return { text: '—', isGood: true };
+    const diff = curN - prevN;
+    const sign = diff > 0 ? '+' : '';
+    let text = isPercent ? `${sign}${diff.toFixed(1)}%` : `${sign}${diff.toFixed(1)}`;
+    if (!isPercent && prevN > 0) {
+      const pct = ((diff / prevN) * 100).toFixed(1);
+      text += ` (${sign}${pct}%)`;
+    }
+    const isGood = invert ? diff <= 0 : diff >= 0;
+    return { text, isGood };
+  }
+
+  const kpiRows: KpiRow[] = [
+    {
+      label: 'Всего звонков',
+      curVal: `${cur.totalCalls} вызовов`,
+      prevVal: prev ? `${prev.totalCalls} вызовов` : undefined,
+      delta: prev ? calcDelta(cur.totalCalls, prev.totalCalls).text : undefined,
+      isGood: prev ? cur.totalCalls >= prev.totalCalls : true
+    },
+    {
+      label: 'Входящие вызовы',
+      curVal: `${cur.incomingCalls} (${cur.totalCalls > 0 ? Math.round((cur.incomingCalls / cur.totalCalls) * 100) : 0}%)`,
+      prevVal: prev ? `${prev.incomingCalls} (${prev.totalCalls > 0 ? Math.round((prev.incomingCalls / prev.totalCalls) * 100) : 0}%)` : undefined,
+      delta: prev ? calcDelta(cur.incomingCalls, prev.incomingCalls).text : undefined,
+      isGood: true
+    },
+    {
+      label: 'Исходящие вызовы',
+      curVal: `${cur.outgoingCalls} (${cur.totalCalls > 0 ? Math.round((cur.outgoingCalls / cur.totalCalls) * 100) : 0}%)`,
+      prevVal: prev ? `${prev.outgoingCalls} (${prev.totalCalls > 0 ? Math.round((prev.outgoingCalls / prev.totalCalls) * 100) : 0}%)` : undefined,
+      delta: prev ? calcDelta(cur.outgoingCalls, prev.outgoingCalls).text : undefined,
+      isGood: true
+    },
+    {
+      label: 'Конверсия в запись',
+      curVal: `${cur.conversionRate}% (${cur.bookedCount} записей)`,
+      prevVal: prev ? `${prev.conversionRate}% (${prev.bookedCount} записей)` : undefined,
+      delta: prev ? calcDelta(cur.conversionRate, prev.conversionRate, true).text : undefined,
+      isGood: prev ? cur.conversionRate >= prev.conversionRate : true
+    },
+    {
+      label: 'Средний балл операторов',
+      curVal: `${cur.averageScore} / 10`,
+      prevVal: prev ? `${prev.averageScore} / 10` : undefined,
+      delta: prev ? calcDelta(cur.averageScore, prev.averageScore).text : undefined,
+      isGood: prev ? cur.averageScore >= prev.averageScore : true
+    },
+    {
+      label: 'Уровень споров и претензий',
+      curVal: `${cur.disputeRate}% (${cur.disputeCount} звонков)`,
+      prevVal: prev ? `${prev.disputeRate}% (${prev.disputeCount} звонков)` : undefined,
+      delta: prev ? calcDelta(cur.disputeRate, prev.disputeRate, true, true).text : undefined,
+      isGood: prev ? cur.disputeRate <= prev.disputeRate : true
+    },
+    {
+      label: 'Пропущенные / Не отвеченные',
+      curVal: `${cur.missedCalls} (${cur.totalCalls > 0 ? Math.round((cur.missedCalls / cur.totalCalls) * 100) : 0}%)`,
+      prevVal: prev ? `${prev.missedCalls} (${prev.totalCalls > 0 ? Math.round((prev.missedCalls / prev.totalCalls) * 100) : 0}%)` : undefined,
+      delta: prev ? calcDelta(cur.missedCalls, prev.missedCalls, false, true).text : undefined,
+      isGood: prev ? cur.missedCalls <= prev.missedCalls : true
+    },
+    {
+      label: 'Средняя длительность диалога',
+      curVal: formatDuration(cur.avgDurationSec),
+      prevVal: prev ? formatDuration(prev.avgDurationSec) : undefined,
+      delta: prev ? calcDelta(cur.avgDurationSec, prev.avgDurationSec).text : undefined,
+      isGood: true
+    },
+  ];
+
+  // Draw KPI Table Header
+  const tableHeaderY = doc.y;
+  doc.rect(margin, tableHeaderY, contentWidth, 20).fill('#e2e8f0');
+
+  const colWidthMetric = data.isComparative ? 180 : 280;
+  const colWidthCur = data.isComparative ? 120 : 243;
+  const colWidthPrev = 120;
+  const colWidthDelta = 103;
+
+  doc.font('AppFontBold').fontSize(8).fillColor('#1e293b');
+  doc.text('Показатель / Метрика', margin + 8, tableHeaderY + 6);
+  doc.text(data.isComparative ? 'Текущий период' : 'Значение за период', margin + colWidthMetric + 8, tableHeaderY + 6);
+  if (data.isComparative) {
+    doc.text('Предыдущий период', margin + colWidthMetric + colWidthCur + 8, tableHeaderY + 6);
+    doc.text('Динамика (Δ)', margin + colWidthMetric + colWidthCur + colWidthPrev + 8, tableHeaderY + 6);
+  }
+
+  doc.y = tableHeaderY + 20;
+
+  kpiRows.forEach((row, idx) => {
+    ensureSpace(20);
+    const rowY = doc.y;
+    const bg = idx % 2 === 0 ? '#ffffff' : '#f8fafc';
+    doc.rect(margin, rowY, contentWidth, 19).fillAndStroke(bg, '#f1f5f9');
+
+    doc.font('AppFontBold').fontSize(8).fillColor('#334155').text(row.label, margin + 8, rowY + 5);
+    doc.font('AppFont').fontSize(8).fillColor('#0f172a').text(row.curVal, margin + colWidthMetric + 8, rowY + 5);
+
+    if (data.isComparative && row.prevVal) {
+      doc.font('AppFont').fontSize(8).fillColor('#64748b').text(row.prevVal, margin + colWidthMetric + colWidthCur + 8, rowY + 5);
+      const deltaColor = row.isGood ? '#15803d' : '#b91c1c';
+      doc.font('AppFontBold').fontSize(8).fillColor(deltaColor).text(row.delta || '—', margin + colWidthMetric + colWidthCur + colWidthPrev + 8, rowY + 5);
+    }
+
+    doc.y = rowY + 19;
+  });
+
+  doc.moveDown(0.8);
+
+  // 4. Operator Ranking Table
+  ensureSpace(80);
+  doc.font('AppFontBold').fontSize(11).fillColor('#0f172a').text('2. Рейтинг и результативность операторов (администраторов)');
+  doc.moveDown(0.3);
+
+  const opHeaderY = doc.y;
+  doc.rect(margin, opHeaderY, contentWidth, 20).fill('#e2e8f0');
+
+  const opColName = 160;
+  const opColCalls = 70;
+  const opColScore = 80;
+  const opColBooked = 70;
+  const opColConv = 80;
+  const opColDisp = 63;
+
+  doc.font('AppFontBold').fontSize(8).fillColor('#1e293b');
+  doc.text('Сотрудник (Оператор)', margin + 8, opHeaderY + 6);
+  doc.text('Звонков', margin + opColName + 8, opHeaderY + 6);
+  doc.text('Ср. балл', margin + opColName + opColCalls + 8, opHeaderY + 6);
+  doc.text('Записей', margin + opColName + opColCalls + opColScore + 8, opHeaderY + 6);
+  doc.text('Конверсия', margin + opColName + opColCalls + opColScore + opColBooked + 8, opHeaderY + 6);
+  doc.text('Конфликты', margin + opColName + opColCalls + opColScore + opColBooked + opColConv + 8, opHeaderY + 6);
+
+  doc.y = opHeaderY + 20;
+
+  if (data.operators.length === 0) {
+    const emptyY = doc.y;
+    doc.rect(margin, emptyY, contentWidth, 20).fillAndStroke('#ffffff', '#e2e8f0');
+    doc.font('AppFont').fontSize(8).fillColor('#64748b').text('За выбранный период звонки операторов не зафиксированы', margin + 8, emptyY + 6);
+    doc.y = emptyY + 20;
+  } else {
+    data.operators.forEach((op, idx) => {
+      ensureSpace(20);
+      const rowY = doc.y;
+      const bg = idx % 2 === 0 ? '#ffffff' : '#f8fafc';
+      doc.rect(margin, rowY, contentWidth, 19).fillAndStroke(bg, '#f1f5f9');
+
+      doc.font('AppFontBold').fontSize(8).fillColor('#0f172a').text(op.name, margin + 8, rowY + 5);
+      doc.font('AppFont').fontSize(8).fillColor('#334155').text(String(op.totalCalls), margin + opColName + 8, rowY + 5);
+
+      const scoreText = op.avgScore !== null ? `${op.avgScore} / 10` : '—';
+      const scoreColor = (op.avgScore || 0) >= 8 ? '#15803d' : (op.avgScore || 0) >= 6 ? '#b45309' : '#b91c1c';
+      doc.font('AppFontBold').fontSize(8).fillColor(scoreColor).text(scoreText, margin + opColName + opColCalls + 8, rowY + 5);
+
+      doc.font('AppFont').fontSize(8).fillColor('#334155').text(String(op.bookedCount), margin + opColName + opColCalls + opColScore + 8, rowY + 5);
+      doc.font('AppFontBold').fontSize(8).fillColor('#0369a1').text(`${op.conversionRate}%`, margin + opColName + opColCalls + opColScore + opColBooked + 8, rowY + 5);
+
+      const dispColor = op.disputes > 0 ? '#dc2626' : '#64748b';
+      doc.font('AppFont').fontSize(8).fillColor(dispColor).text(String(op.disputes), margin + opColName + opColCalls + opColScore + opColBooked + opColConv + 8, rowY + 5);
+
+      doc.y = rowY + 19;
+    });
+  }
+
+  doc.moveDown(0.8);
+
+  // 5. Conclusions and Manager Recommendations
+  ensureSpace(85);
+  doc.font('AppFontBold').fontSize(11).fillColor('#0f172a').text('3. Резюме и аналитические выводы');
+  doc.moveDown(0.3);
+
+  const concY = doc.y;
+  doc.rect(margin, concY, contentWidth, 68).fillAndStroke('#eff6ff', '#bfdbfe');
+
+  const recList = [
+    `• Общая конверсия обращений в запись составила ${cur.conversionRate}%, средняя оценка качества работы операторов — ${cur.averageScore}/10.`,
+    cur.disputeRate > 10 
+      ? `• ВНИМАНИЕ: Доля спорных обращений составляет ${cur.disputeRate}%. Рекомендуется провести разбор конфликтных диалогов с дежурными администраторами.` 
+      : `• Показатель конфликтности находится в пределах регламентной нормы салона (${cur.disputeRate}%).`,
+    `• Пиковые часы обращений клиентов: ${data.hourlyPeakHours || '11:00 — 16:00'}. Рекомендуется обеспечить максимальную доступность линии в данный интервал.`,
+    data.isComparative && prev
+      ? `• Сравнительная динамика: конверсия ${cur.conversionRate >= prev.conversionRate ? 'выросла на' : 'снизилась на'} ${Math.abs(cur.conversionRate - prev.conversionRate).toFixed(1)}%, средний балл ${cur.averageScore >= prev.averageScore ? 'увеличился на' : 'снизился на'} ${Math.abs(cur.averageScore - prev.averageScore).toFixed(1)}.`
+      : '• Мониторинг качества осуществляется в автоматическом режиме с применением технологий распознавания речи Yandex SpeechKit и анализа Сбер GigaChat.'
+  ];
+
+  let currRecY = concY + 7;
+  recList.forEach((r) => {
+    doc.font('AppFont').fontSize(7.8).fillColor('#1e3a8a').text(r, margin + 8, currRecY, { width: contentWidth - 16 });
+    currRecY += 14;
+  });
+
+  doc.y = concY + 72;
+
+  // 6. Signatures Block
+  ensureSpace(50);
+  doc.moveDown(0.5);
+  const signY = doc.y;
+  doc.rect(margin, signY, contentWidth, 42).fillAndStroke('#f8fafc', '#e2e8f0');
+
+  doc.font('AppFontBold').fontSize(8).fillColor('#475569').text('УТВЕРЖДЕНИЕ ОТЧЕТА УПРАВЛЯЮЩИМ САЛОНА «ЛИК 28»', margin + 12, signY + 7);
+  doc.font('AppFont').fontSize(7.5).fillColor('#334155').text(
+    'Управляющий салоном: ________________________ / ________________________       Дата: «____» ________________ 202___ г.',
+    margin + 12,
+    signY + 23
+  );
+
+  // 7. Page numbers and footer
+  const pages = doc.bufferedPageRange();
+  for (let i = 0; i < pages.count; i++) {
+    doc.switchToPage(i);
+    const footerY = doc.page.height - margin + 12;
+    doc.font('AppFont').fontSize(7.5).fillColor('#94a3b8');
+    doc.text(
+      `Салон красоты «Лик 28» • Сводный отчет по звонкам • ${data.periodDates}`,
+      margin,
+      footerY
+    );
+    doc.text(`Страница ${i + 1} из ${pages.count}`, margin, footerY, {
+      align: 'right',
+      width: contentWidth,
+    });
+  }
+
+  return doc;
+}
+

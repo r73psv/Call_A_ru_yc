@@ -341,6 +341,8 @@ export async function readStore(): Promise<AppDatabase> {
   return memCache;
 }
 
+let writeQueue = Promise.resolve();
+
 export async function writeStore(data: AppDatabase): Promise<void> {
   memCache = data;
   const dir = path.dirname(DATA_PATH_ENC);
@@ -348,24 +350,38 @@ export async function writeStore(data: AppDatabase): Promise<void> {
     mkdirSync(dir, { recursive: true });
   }
 
-  // Sort calls newest first
-  if (Array.isArray(data.calls)) {
-    data.calls.sort((a, b) => {
-      const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
-      const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
-      return timeB - timeA;
-    });
-  }
+  // Chain writes sequentially to prevent file write collisions
+  writeQueue = writeQueue.then(async () => {
+    // Sort calls newest first
+    if (Array.isArray(data.calls)) {
+      data.calls.sort((a, b) => {
+        const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+        const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+        return timeB - timeA;
+      });
+    }
 
-  const jsonStr = JSON.stringify(data, null, 2);
-  const payload = encrypt(jsonStr);
-  await fs.writeFile(DATA_PATH_ENC, JSON.stringify(payload, null, 2), 'utf-8');
+    const jsonStr = JSON.stringify(data, null, 2);
+    const payload = encrypt(jsonStr);
+    const encStr = JSON.stringify(payload, null, 2);
 
-  // Also write local backup mirror for fail-safe persistence
-  try {
-    const backupMirror = path.join(dir, 'data-store.backup.json');
-    await fs.writeFile(backupMirror, jsonStr, 'utf-8');
-  } catch (err: any) {
-    console.warn('[Store] Предупреждение: не удалось обновить backup mirror:', err.message);
-  }
+    // Atomic write for DATA_PATH_ENC
+    const tmpEnc = `${DATA_PATH_ENC}.tmp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    await fs.writeFile(tmpEnc, encStr, 'utf-8');
+    await fs.rename(tmpEnc, DATA_PATH_ENC);
+
+    // Atomic write for backup mirror
+    try {
+      const backupMirror = path.join(dir, 'data-store.backup.json');
+      const tmpBak = `${backupMirror}.tmp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      await fs.writeFile(tmpBak, jsonStr, 'utf-8');
+      await fs.rename(tmpBak, backupMirror);
+    } catch (err: any) {
+      console.warn('[Store] Предупреждение: не удалось обновить backup mirror:', err.message);
+    }
+  }).catch(err => {
+    console.error('[Store] Критическая ошибка записи базы данных:', err);
+  });
+
+  await writeQueue;
 }

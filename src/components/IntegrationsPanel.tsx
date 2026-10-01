@@ -25,8 +25,8 @@ export function IntegrationsPanel({ config, onSaveConfig, userRole = 'admin' }: 
 
   const [megafonToken, setMegafonToken] = useState(config.megafon?.token || '');
   const [megafonActive, setMegafonActive] = useState(config.megafon?.active ?? true);
-  const [pollingEnabled, setPollingEnabled] = useState(config.megafon?.pollingEnabled ?? false);
-  const [pollingIntervalMinutes, setPollingIntervalMinutes] = useState(config.megafon?.pollingIntervalMinutes || 5);
+  const [pollingEnabled, setPollingEnabled] = useState(config.megafon?.pollingEnabled ?? true);
+  const [pollingIntervalMinutes, setPollingIntervalMinutes] = useState(config.megafon?.pollingIntervalMinutes || 15);
   const [megafonLkLogin, setMegafonLkLogin] = useState(config.megafon?.lkLogin || '');
   const [megafonLkPassword, setMegafonLkPassword] = useState(config.megafon?.lkPassword || '');
 
@@ -538,6 +538,59 @@ export function IntegrationsPanel({ config, onSaveConfig, userRole = 'admin' }: 
                 placeholder="Токен АТС Мегафон"
                 className="w-full p-2 border border-slate-200 rounded-lg text-xs font-mono"
               />
+            </div>
+
+            {/* Автоопрос АТС и интервал */}
+            <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200 space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="flex items-center gap-2 cursor-pointer font-bold text-slate-800">
+                  <input
+                    type="checkbox"
+                    checked={pollingEnabled}
+                    onChange={(e) => setPollingEnabled(e.target.checked)}
+                    className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500"
+                  />
+                  <span>Автоопрос АТС (фоновый сбор звонков)</span>
+                </label>
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                  pollingEnabled ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'
+                }`}>
+                  {pollingEnabled ? 'Включен' : 'Выключен'}
+                </span>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[11px] text-slate-600 font-medium">Интервал опроса:</span>
+                  <span className="text-xs font-bold text-emerald-700 font-mono">{pollingIntervalMinutes} мин.</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min="1"
+                    max="1440"
+                    value={pollingIntervalMinutes}
+                    onChange={(e) => setPollingIntervalMinutes(Math.max(1, parseInt(e.target.value, 10) || 15))}
+                    className="w-20 p-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-800"
+                  />
+                  <div className="flex flex-wrap items-center gap-1">
+                    {[5, 10, 15, 30, 60].map((mins) => (
+                      <button
+                        key={mins}
+                        type="button"
+                        onClick={() => setPollingIntervalMinutes(mins)}
+                        className={`px-2 py-0.5 text-[10px] rounded-md font-semibold transition-all ${
+                          pollingIntervalMinutes === mins
+                            ? 'bg-emerald-600 text-white shadow-3xs'
+                            : 'bg-white hover:bg-emerald-100 text-slate-600 border border-slate-200'
+                        }`}
+                      >
+                        {mins} мин{mins === 15 ? ' (стандарт)' : ''}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div className="p-3 bg-green-50 rounded-lg border border-green-200 text-green-900">

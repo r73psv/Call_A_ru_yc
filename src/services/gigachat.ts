@@ -21,7 +21,8 @@ export const SYSTEM_PROMPT = `Ты — ведущий эксперт контр�
    - Разделяй реплики диалога СТРОГО по двум ролям: «Менеджер» (администратор салона) и «Клиент» (звонящий).
    - Каждая реплика в поле formatted_transcript ОБЯЗАТЕЛЬНО должна быть записана в формате: 'Имя: Текст' (например, 'Менеджер: Текст реплики' или 'Клиент: Текст реплики').
    - Каждая реплика пишется с новой строки. КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО склеивать реплики разных говорящих в одну строку или абзац!
-   - Если в предоставленном транскрипте реплики склеены или отсутствует разметка ролей — восстанови диалог и раздели фразы строго по ролям 'Менеджер: ...' и 'Клиент: ...'.
+   - Если реплики склеены в одну строку — раздели их на реплики Менеджера и Клиента.
+   - КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО ПРИДУМЫВАТЬ ИЛИ ВЫМЫШЛЯТЬ НЕСУЩЕСТВУЮЩИЙ ДИАЛОГ! Если в транскрипте нет диалога (тишина, гудки, сброс, менее 10 секунд, обрыв или автоответчик), запиши в formatted_transcript 'Разговор не состоялся (диалог отсутствует)', НЕ СОЧИНЯЙ диалог от себя!
 
 2. КРАТКОЕ СОДЕРЖАНИЕ (transcript_summary):
    - Должно содержать 2-4 предложения и отражать ВСЮ цепочку разговора:
@@ -49,16 +50,20 @@ export const SYSTEM_PROMPT = `Ты — ведущий эксперт контр�
    - booking_status: строго дублирует статус записи ("согласие"|"отказ"|"консультация"|"не применимо").
    - client_issue: конкретная суть запроса клиента (например: "Запись на оформление челки к мастеру Надежде").
 
-5. ОЦЕНКА ОПЕРАТОРА (operator_score):
-   - ВНИМАНИЕ: СТРОЖАЙШИЙ ЗАПРЕТ ФАНТАЗИРОВАНИЯ И ВЫСТАВЛЕНИЯ ОЦЕНОК ПРИ НЕСОСТОЯВШИХСЯ РАЗГОВОРАХ!
-   - Если разговор не состоялся, сработал автоответчик, автоинформатор, голосовая почта, робот оператора связи, линия занята, гудки, тишина или абонент не ответил:
+5. ОЦЕНКА ОПЕРАТОРА (operator_score) И КОРОТКИЕ РАЗГОВОРЫ (10–60 СЕКУНД):
+   - ВНИМАНИЕ: СТРОЖАЙШИЙ ЗАПРЕТ ФАНТАЗИРОВАНИЯ И ВЫСТАВЛЕНИЯ ОЦЕНОК ПРИ НЕСОСТОЯВШИХСЯ РАЗГОВОРАХ И ЗВОНКАХ МЕНЕЕ 10 СЕКУНД!
+   - Если звонок длился менее 10 секунд, сброшен, сработал автоответчик, автоинформатор, голосовая почта, гудки, тишина или абонент не ответил:
      * operator_score ОБЯЗАН БЫТЬ СТРОГО null (НЕ число, НЕ 0, а именно null)! КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО выдумывать диалог и ставить оценку!
-     * operator_comment: "Разговор не состоялся (сработал автоответчик/автоинформатор или линия была недоступна)."
+     * operator_comment: "Разговор не состоялся (длительность менее 10 секунд или сработал автоответчик/автоинформатор)."
      * booking_status: "не применимо"
-     * call_outcome: "автоответчик"
+     * call_outcome: "не состоялся"
      * recommendations: "Повторить попытку дозвона клиенту в рабочее время салона «Лик 28»."
-     * transcript_summary: "Разговор не состоялся: сработал автоответчик или автоинформатор. Запись не оформлена."
-   - Оценка оператора (число от 1 до 10) и содержательный комментарий выставляются ТОЛЬКО если состоялся РЕАЛЬНЫЙ диалог между живым клиентом и администратором салона.
+     * transcript_summary: "Разговор не состоялся: длительность вызова менее 10 секунд или диалог отсутствует."
+   - ВАЖНО ПО ЗВОНКАМ ДЛИТЕЛЬНОСТЬЮ ОТ 10 СЕКУНД ДО 1 МИНУТЫ:
+     * Звонки от 10 секунд до 1 минуты ЧАСТО являются короткими, но ПОЛНОЦЕННЫМИ разговорами (например, клиент быстро спросил график работы, цену или перенес визит, администратор ответил).
+     * Если клиент и администратор обменялись хотя бы 1-2 реальными репликами — ЭТО СОСТОЯВШИЙСЯ РАЗГОВОР! КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО писать "разговор не состоялся" для таких звонков!
+     * Сформируй точное резюме сути вопроса клиента, укажи booking_status ("консультация", "согласие" или "отказ") и оцени работу оператора (1-10).
+   - Оценка оператора (число от 1 до 10) выставляется ТОЛЬКО если состоялся РЕАЛЬНЫЙ диалог.
 
 6. РЕГЛАМЕНТ САЛОНА:
    - Официальное название салона: «Лик 28».
@@ -199,24 +204,26 @@ export type GigaChatLogCallback = (
 export async function analyzeWithRetry(
   transcript: string,
   model?: GigaChatModel,
-  onLog?: GigaChatLogCallback
+  onLog?: GigaChatLogCallback,
+  callDurationSeconds?: number
 ): Promise<AnalysisResult> {
   const modelName = model || 'GigaChat:Lite';
   return gigaChatQueue.enqueue(async () => {
-    return executeWithExponentialBackoff(transcript, modelName, onLog);
+    return executeWithExponentialBackoff(transcript, modelName, onLog, callDurationSeconds);
   }, `Анализ транскрипта (${modelName})`);
 }
 
 async function executeWithExponentialBackoff(
   transcript: string,
   model: GigaChatModel,
-  onLog?: GigaChatLogCallback
+  onLog?: GigaChatLogCallback,
+  callDurationSeconds?: number
 ): Promise<AnalysisResult> {
   let lastError: any = null;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
-      return await analyzeWithGigaChat(transcript, model);
+      return await analyzeWithGigaChat(transcript, model, callDurationSeconds);
     } catch (error: any) {
       lastError = error;
       const status = error.response?.status;
@@ -279,23 +286,33 @@ async function executeWithExponentialBackoff(
 
 export async function analyzeWithGigaChat(
   transcript: string,
-  modelOverride?: GigaChatModel
+  modelOverride?: GigaChatModel,
+  callDurationSeconds?: number
 ): Promise<AnalysisResult> {
   const model: GigaChatModel = modelOverride || (process.env.GIGACHAT_DEFAULT_MODEL as GigaChatModel) || 'GigaChat:Lite';
 
+  // Strict guard: if call duration is under 10 seconds, immediately return unheld call without calling LLM
+  if (callDurationSeconds !== undefined && callDurationSeconds < 10) {
+    return generateLocalFallbackAnalysis(transcript, model, callDurationSeconds);
+  }
+
   if (!isGigaChatConfigured()) {
     // If not configured, generate realistic localized rule-based analysis for demo/testing
-    return generateLocalFallbackAnalysis(transcript, model);
+    return generateLocalFallbackAnalysis(transcript, model, callDurationSeconds);
   }
 
   const token = await getGigaChatToken();
-  console.log(`[GigaChat] Анализ моделью: ${model}`);
+  console.log(`[GigaChat] Анализ моделью: ${model} (длительность звонка: ${callDurationSeconds ?? 'не указана'} сек.)`);
 
   const gigachatApiUrl = process.env.GIGACHAT_API_URL || 'https://gigachat.devices.sberbank.ru/api/v1/chat/completions';
 
+  const userPromptContent = callDurationSeconds !== undefined
+    ? `Фактическая длительность звонка: ${callDurationSeconds} сек.\nТранскрипт разговора:\n${transcript}`
+    : `Транскрипт разговора:\n${transcript}`;
+
   const messages = [
     { role: 'system', content: SYSTEM_PROMPT },
-    { role: 'user', content: `Транскрипт разговора:\n${transcript}` },
+    { role: 'user', content: userPromptContent },
   ];
 
   const res = await axios.post(
@@ -472,42 +489,79 @@ function parseGigaChatJson(text: string): AnalysisResult {
   };
 }
 
-function generateLocalFallbackAnalysis(transcript: string, model: GigaChatModel): AnalysisResult {
-  const lower = (transcript || '').toLowerCase().trim();
+function generateLocalFallbackAnalysis(
+  transcript: string,
+  model: GigaChatModel,
+  callDurationSeconds?: number
+): AnalysisResult {
+  const clean = (transcript || '').trim();
+  const lower = clean.toLowerCase();
 
-  // If transcript is empty or placeholder awaiting transcription
-  if (!lower || lower.includes('стенограмма ожидает') || lower.includes('запись разговора и стенограмма отсутствуют')) {
+  // 1. Strict guard: calls under 10 seconds or zero-duration
+  if (callDurationSeconds !== undefined && callDurationSeconds < 10) {
     return {
-      transcript_summary: 'Аудиозапись ожидает расшифровки речи.',
+      transcript_summary: `Разговор не состоялся: длительность вызова ${callDurationSeconds} сек (менее 10 секунд), диалог между оператором и клиентом отсутствует.`,
       booking_status: 'не применимо',
-      formatted_transcript: transcript || '',
+      formatted_transcript: clean || 'Разговор не состоялся (длительность менее 10 сек, диалог отсутствует).',
       key_facts: {
         is_dispute: false,
         dispute_reason: null,
         tone_client: 'нейтральный',
         tone_manager: 'нейтральный',
-        call_outcome: 'ожидает расшифровки',
+        call_outcome: 'не состоялся',
         booking_status: 'не применимо',
-        client_issue: 'Звонок ожидает расшифровки речи',
+        client_issue: 'Звонок менее 10 секунд / диалог отсутствует',
       },
       operator_score: null,
-      operator_comment: 'Оценка оператора ожидает распознавания стенограммы разговора.',
-      recommendations: 'Выполнить расшифровку аудиозаписи разговора.',
+      operator_comment: `Оценка не выставляется: разговор не состоялся (длительность ${callDurationSeconds} сек менее 10 секунд, диалог отсутствует).`,
+      recommendations: 'При необходимости повторить попытку дозвона клиенту.',
     };
   }
 
-  const isAuto = lower.includes('автоответчик') ||
-    lower.includes('оставьте сообщение после сигнала') ||
-    lower.includes('абонент временно недоступен') ||
-    lower.includes('не может ответить') ||
-    lower.includes('номер занят') ||
-    lower.includes('переадресация вызова');
-  
-  if (isAuto) {
+  // 2. Empty or placeholder transcript (awaiting or missing STT)
+  const isPlaceholderOrEmpty = !clean ||
+    lower.includes('стенограмма ожидает') ||
+    lower.includes('запись разговора и стенограмма отсутствуют') ||
+    lower.includes('разговор не состоялся');
+
+  if (isPlaceholderOrEmpty) {
+    const durLabel = callDurationSeconds !== undefined ? ` (длительность ${callDurationSeconds} сек.)` : '';
     return {
-      transcript_summary: 'Разговор не состоялся (сработал автоответчик или короткое системное сообщение). Запись не оформлена.',
+      transcript_summary: `Разговор не состоялся: аудиозапись${durLabel} не содержит разборчивой речи (зафиксированы только гудки/тишина или сброс линии).`,
       booking_status: 'не применимо',
-      formatted_transcript: transcript,
+      formatted_transcript: clean || `Аудиозапись${durLabel} не содержит разборчивой речи.`,
+      key_facts: {
+        is_dispute: false,
+        dispute_reason: null,
+        tone_client: 'нейтральный',
+        tone_manager: 'нейтральный',
+        call_outcome: 'не состоялся',
+        booking_status: 'не применимо',
+        client_issue: 'Отсутствует разборчивая речь в аудиозаписи',
+      },
+      operator_score: null,
+      operator_comment: `Оценка не выставляется: аудиозапись${durLabel} не содержит разборчивого диалога оператора и клиента.`,
+      recommendations: 'Проверить качество связи или повторить вызов.',
+    };
+  }
+
+  // 3. Pure voicemail/answering machine ONLY if there is NO real conversation
+  const hasDialogue = (lower.includes('клиент:') && (lower.includes('менеджер:') || lower.includes('администратор:'))) ||
+    clean.split('\n').filter(l => l.trim().length > 0).length >= 2;
+
+  const isPureAuto = !hasDialogue && (
+    lower.includes('оставьте сообщение после сигнала') ||
+    lower.includes('вас приветствует автоответчик') ||
+    lower.includes('абонент временно недоступен') ||
+    lower.includes('голосовая почта') ||
+    lower.includes('автоинформатор')
+  );
+  
+  if (isPureAuto) {
+    return {
+      transcript_summary: 'Разговор не состоялся: сработал автоответчик или голосовая почта. Запись не оформлена.',
+      booking_status: 'не применимо',
+      formatted_transcript: clean,
       key_facts: {
         is_dispute: false,
         dispute_reason: null,
@@ -518,38 +572,66 @@ function generateLocalFallbackAnalysis(transcript: string, model: GigaChatModel)
         client_issue: 'Звонок не состоялся / автоответчик',
       },
       operator_score: null,
-      operator_comment: 'Разговор не состоялся: сработал автоответчик или линия была недоступна.',
+      operator_comment: 'Разговор не состоялся: зафиксирован автоответчик (оценка не выставляется).',
       recommendations: 'Повторить звонок клиенту в рабочие часы салона «Лик 28».',
     };
   }
 
+  // 4. Genuine call with speech (from 10 seconds to 1 minute or longer)
+  // Strict rule: NEVER claim "длительность менее 10 секунд" if call was >= 10s!
   const isDispute = lower.includes('отмен') || lower.includes('жалоб') || lower.includes('претензи') || lower.includes('недоволен') || lower.includes('издеваетесь');
-  const isDeclined = lower.includes('не будет в городе') || lower.includes('не смогу') || lower.includes('не получается') || lower.includes('неудобно') || lower.includes('не подходит');
-  const isBooking = !isDeclined && (lower.includes('записали') || lower.includes('до встречи') || lower.includes('ждем вас'));
+  const isDeclined = lower.includes('не будет в городе') || lower.includes('не смогу') || lower.includes('не получается') || lower.includes('неудобно') || lower.includes('не подходит') || lower.includes('отказ');
+  
+  // Comprehensive Russian salon booking confirmation & consent recognition
+  const isBooking = !isDeclined && (
+    lower.includes('записали') || lower.includes('записала') || lower.includes('записал') ||
+    lower.includes('записываю') || lower.includes('записан') || lower.includes('записана') || lower.includes('записаны') ||
+    lower.includes('запишите') || lower.includes('запись оформлена') || lower.includes('запись подтверждена') ||
+    lower.includes('до встречи') || lower.includes('ждем вас') || lower.includes('ждём вас') ||
+    lower.includes('ждем') || lower.includes('ждём') || lower.includes('жду вас') || lower.includes('будем ждать') ||
+    lower.includes('договорились') || lower.includes('согласна') || lower.includes('согласен') ||
+    lower.includes('буду к') || lower.includes('буду в') || lower.includes('приду в') || lower.includes('приду к') ||
+    lower.includes('подходит время') || lower.includes('подходит этот день') || lower.includes('подтверждаю запись')
+  );
 
   const outcome = isBooking ? 'запись' : (isDeclined ? 'отказ' : (isDispute ? 'перезвон' : 'консультация'));
   const bookingStatus = isBooking ? 'согласие' : (isDeclined ? 'отказ' : (isDispute ? 'консультация' : 'консультация'));
-  const outcomeText = isBooking
-    ? 'Запись успешно подтверждена и зафиксирована.'
-    : (isDeclined
-      ? 'Клиент отказалась от предложенных вариантов записи из-за невозможности быть в городе / неподходящего времени. Разговор завершился отказом от записи.'
-      : 'Разговор завершился справочной консультацией.');
+
+  // Derive factual summary without inventing fantasy details
+  const cleanSnippet = clean.replace(/^(клиент:|менеджер:|администратор:)\s*/gim, '').trim().slice(0, 160);
+  const durPrefix = callDurationSeconds !== undefined ? `[${callDurationSeconds} сек.] ` : '';
+
+  let summaryText = '';
+  if (isBooking) {
+    summaryText = `${durPrefix}Клиент обратился в салон «Лик 28». Достигнута договоренность о записи на услуги. Статус: согласие.`;
+  } else if (isDeclined) {
+    summaryText = `${durPrefix}Клиент обратился в салон «Лик 28», но предложенное время не подошло. Статус: отказ от записи.`;
+  } else if (isDispute) {
+    summaryText = `${durPrefix}Обращение клиента с вопросом/претензией по обслуживанию. Требуется перезвон.`;
+  } else {
+    summaryText = `${durPrefix}Короткий диалог / консультация: «${cleanSnippet}»`;
+  }
+
+  const score = hasDialogue ? (isDispute ? 7 : 9) : null;
+  const comment = hasDialogue
+    ? (isDispute ? 'Администратор принял претензию/отмену, соблюдая вежливый тон.' : 'Администратор вежливо проконсультировал клиента по регламенту «Лик 28».')
+    : 'Краткий обмен репликами. Полноценная оценка регламента не выставляется.';
 
   return {
-    transcript_summary: `Клиент обратилась в салон красоты «Лик 28» по поводу записи на услуги. Администратор проверила график мастера и предложила доступные варианты. Итог: ${outcomeText}`,
+    transcript_summary: summaryText,
     booking_status: bookingStatus,
     formatted_transcript: transcript,
     key_facts: {
       is_dispute: isDispute,
       dispute_reason: isDispute ? 'Претензия или отмена записи' : null,
-      tone_client: isDispute ? 'негативный' : 'позитивный',
+      tone_client: isDispute ? 'негативный' : 'нейтральный',
       tone_manager: 'позитивный',
       call_outcome: outcome,
       booking_status: bookingStatus,
-      client_issue: 'Запись на процедуры в салоне «Лик 28»',
+      client_issue: isDispute ? 'Вопрос по обслуживанию' : 'Консультация / обращение в салон',
     },
-    operator_score: isDispute ? 8 : 10,
-    operator_comment: 'Администратор вежливо поприветствовал клиента с указанием названия «Лик 28», проверил расписание и предложил доступные слоты.',
-    recommendations: 'Продолжать соблюдение речевых стандартов бренда «Лик 28». Предлагать клиенту запись на другие даты.',
+    operator_score: score,
+    operator_comment: comment,
+    recommendations: 'Соблюдать стандарты сервиса и вежливого общения салона «Лик 28».',
   };
 }

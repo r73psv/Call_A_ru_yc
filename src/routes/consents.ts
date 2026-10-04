@@ -5,11 +5,13 @@
 
 import { Router, Request, Response } from 'express';
 import { readConsentStore, writeConsentStore } from '../store/consent-store.js';
+import { readStoreSync, writeStore } from '../store/store.js';
 import { 
   ensureAutoConsent, 
   grantLoyaltyConsent, 
   revokeConsent, 
   hashPhone,
+  syncConsentsFromCalls,
   CONSENT_TEXT_VERSION
 } from '../store/consents.js';
 import { maskPhone } from '../services/anonymize.js';
@@ -49,13 +51,27 @@ consentsRouter.get('/check', async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/consents?page=1&limit=50&status=active
+// GET /api/consents?page=1&limit=500&status=all
 consentsRouter.get('/', requireRole(['admin', 'manager']), async (req: Request, res: Response) => {
   try {
     const page = parseInt((req.query.page as string) || '1', 10);
-    const limit = parseInt((req.query.limit as string) || '50', 10);
+    const limit = parseInt((req.query.limit as string) || '500', 10);
     const status = req.query.status as string;
     const search = ((req.query.search as string) || '').toLowerCase();
+
+    // Auto-reconcile consents from calls so no call is left without a consent record
+    try {
+      const mainDb = readStoreSync();
+      if (mainDb.calls && mainDb.calls.length > 0) {
+        const createdCount = await syncConsentsFromCalls(mainDb.calls);
+        if (createdCount > 0) {
+          mainDb.consents = (await readConsentStore()).consents;
+          await writeStore(mainDb);
+        }
+      }
+    } catch (syncErr: any) {
+      console.warn('[Consents] Ошибка авто-сверки согласий со звонками:', syncErr.message);
+    }
 
     await logAccess(
       getCurrentUserRole(req),
@@ -67,6 +83,10 @@ consentsRouter.get('/', requireRole(['admin', 'manager']), async (req: Request, 
     const store = await readConsentStore();
     let items = store.consents;
 
+    const activeCount = store.consents.filter(c => c.status === 'active').length;
+    const naCount = store.consents.filter(c => c.status === 'not_applicable').length;
+    const revokedCount = store.consents.filter(c => c.status === 'revoked').length;
+
     if (status && status !== 'all') {
       items = items.filter((c) => c.status === status);
     }
@@ -74,9 +94,10 @@ consentsRouter.get('/', requireRole(['admin', 'manager']), async (req: Request, 
     if (search) {
       items = items.filter(
         (c) =>
-          c.client_phone_masked.toLowerCase().includes(search) ||
-          c.consent_id.toLowerCase().includes(search) ||
-          c.consent_method.toLowerCase().includes(search)
+          (c.client_phone_masked && c.client_phone_masked.toLowerCase().includes(search)) ||
+          (c.consent_id && c.consent_id.toLowerCase().includes(search)) ||
+          (c.consent_method && c.consent_method.toLowerCase().includes(search)) ||
+          (c.call_id_origin && c.call_id_origin.toLowerCase().includes(search))
       );
     }
 
@@ -84,11 +105,38 @@ consentsRouter.get('/', requireRole(['admin', 'manager']), async (req: Request, 
     const startIndex = (page - 1) * limit;
     const paginated = items.slice(startIndex, startIndex + limit);
 
+    const mainDb = readStoreSync();
     res.json({
       items: paginated,
       total,
+      totalCalls: mainDb.calls?.length || 0,
+      activeCount,
+      naCount,
+      revokedCount,
       page,
       limit,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/consents/sync — Принудительная синхронизация реестра со звонками базы данных
+consentsRouter.post('/sync', requireRole(['admin', 'manager']), async (req: Request, res: Response) => {
+  try {
+    const mainDb = readStoreSync();
+    const calls = mainDb.calls || [];
+    const createdCount = await syncConsentsFromCalls(calls);
+    const store = await readConsentStore();
+    mainDb.consents = store.consents;
+    await writeStore(mainDb);
+
+    res.json({
+      success: true,
+      createdCount,
+      totalConsents: store.consents.length,
+      activeCount: store.consents.filter(c => c.status === 'active').length,
+      totalCalls: calls.length
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

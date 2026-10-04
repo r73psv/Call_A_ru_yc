@@ -650,6 +650,20 @@ export function IntegrationsPanel({ config, onSaveConfig, userRole = 'admin' }: 
                 </div>
               </div>
             </div>
+
+            <div className="mt-3 text-xs">
+              <label className="block font-medium text-slate-600 mb-1">Шаблон сообщения в VK:</label>
+              <textarea
+                value={vkTemplate}
+                onChange={(e) => setVkTemplate(e.target.value)}
+                rows={5}
+                placeholder="🔔 *Анализ звонка #{call_id}*..."
+                className="w-full p-2 border border-slate-200 rounded-lg text-xs font-mono leading-relaxed"
+              />
+              <p className="mt-1 text-[11px] text-slate-500">
+                Переменные: <code className="bg-slate-100 px-1 py-0.5 rounded text-sky-700 font-semibold">{'{duration}'}</code> (длительность звонка), <code className="bg-slate-100 px-1 py-0.5 rounded text-slate-700">{'{call_date_time}'}</code>, <code className="bg-slate-100 px-1 py-0.5 rounded text-slate-700">{'{client_name}'}</code>, <code className="bg-slate-100 px-1 py-0.5 rounded text-slate-700">{'{operator_score}'}</code>, <code className="bg-slate-100 px-1 py-0.5 rounded text-slate-700">{'{summary}'}</code>, <code className="bg-slate-100 px-1 py-0.5 rounded text-slate-700">{'{is_dispute_text}'}</code>, <code className="bg-slate-100 px-1 py-0.5 rounded text-slate-700">{'{recommendations}'}</code>
+              </p>
+            </div>
           </div>
 
           {/* YClients */}

@@ -7,8 +7,9 @@ import * as fs from 'fs/promises';
 import { existsSync, mkdirSync, readFileSync, copyFileSync, writeFileSync } from 'fs';
 import path from 'path';
 import { encrypt, decrypt } from './crypto-store.js';
-import { CallRecord, LogEntry, SystemConfig, AccessLogEntry, User, SystemNotification } from '../types.js';
+import { CallRecord, LogEntry, SystemConfig, AccessLogEntry, User, SystemNotification, ConsentRecord } from '../types.js';
 import { getInitialUsers } from './user-store.js';
+import { readConsentStoreSync, setConsentStoreDirect } from './consent-store.js';
 
 const DATA_PATH_ENC = process.env.DATA_PATH_ENC || path.join(process.cwd(), 'data', 'data-store.enc');
 const DATA_PATH_JSON = process.env.DATA_PATH || path.join(process.cwd(), 'data', 'data-store.json');
@@ -21,6 +22,7 @@ export interface AppDatabase {
   users?: User[];
   notifications?: SystemNotification[];
   config: SystemConfig;
+  consents?: ConsentRecord[];
 }
 
 export function getDefaultConfig(): SystemConfig {
@@ -47,7 +49,7 @@ export function getDefaultConfig(): SystemConfig {
       token: vkToken,
       chatId: vkChatId,
       enabled: Boolean(vkToken && vkChatId),
-      template: `🔔 *Анализ звонка #{call_id}*\n📅 *Дата:* {call_date_time}\n👤 *Клиент:* {client_name}\n📞 *Оценка оператора:* {operator_score}/10\n💬 *Резюме:* {summary}\n⚠️ *Конфликт:* {is_dispute_text}\n💡 *Рекомендации:* {recommendations}`,
+      template: `🔔 *Анализ звонка #{call_id}*\n📅 *Дата:* {call_date_time}\n⏱️ *Длительность:* {duration}\n👤 *Клиент:* {client_name}\n📞 *Оценка оператора:* {operator_score}\n💬 *Резюме:* {summary}\n⚠️ *Конфликт:* {is_dispute_text}\n💡 *Рекомендации:* {recommendations}`,
     },
     yclients: {
       userToken: yclientsUserToken,
@@ -167,12 +169,36 @@ export function readStoreSync(): AppDatabase {
           parsed.config.megafon.token = process.env.MEGAFON_TOKEN.trim();
           parsed.config.megafon.active = true;
         }
+        if (Array.isArray(parsed.consents) && parsed.consents.length > 0) {
+          const currentStore = readConsentStoreSync();
+          if (currentStore.consents.length === 0) {
+            setConsentStoreDirect({ consents: parsed.consents });
+          } else {
+            const existingOrigins = new Set(currentStore.consents.map(c => c.call_id_origin || c.consent_id));
+            const missing = parsed.consents.filter(c => !existingOrigins.has(c.call_id_origin || c.consent_id));
+            if (missing.length > 0) {
+              setConsentStoreDirect({ consents: [...currentStore.consents, ...missing] });
+            }
+          }
+        }
         memCache = parsed;
         return memCache;
       } else if (payload && Array.isArray(payload.calls)) {
         // Raw JSON accidentally stored as .enc
         if (!payload.users || payload.users.length === 0) {
           payload.users = getInitialUsers();
+        }
+        if (Array.isArray(payload.consents) && payload.consents.length > 0) {
+          const currentStore = readConsentStoreSync();
+          if (currentStore.consents.length === 0) {
+            setConsentStoreDirect({ consents: payload.consents });
+          } else {
+            const existingOrigins = new Set(currentStore.consents.map(c => c.call_id_origin || c.consent_id));
+            const missing = payload.consents.filter(c => !existingOrigins.has(c.call_id_origin || c.consent_id));
+            if (missing.length > 0) {
+              setConsentStoreDirect({ consents: [...currentStore.consents, ...missing] });
+            }
+          }
         }
         memCache = payload;
         return memCache;
@@ -198,6 +224,18 @@ export function readStoreSync(): AppDatabase {
       const parsed: AppDatabase = JSON.parse(raw);
       if (parsed && (Array.isArray(parsed.calls) || Array.isArray(parsed.users))) {
         console.log('[Store] Восстановлена база данных из локального backup mirror (data-store.backup.json)');
+        if (Array.isArray(parsed.consents) && parsed.consents.length > 0) {
+          const currentStore = readConsentStoreSync();
+          if (currentStore.consents.length === 0) {
+            setConsentStoreDirect({ consents: parsed.consents });
+          } else {
+            const existingOrigins = new Set(currentStore.consents.map(c => c.call_id_origin || c.consent_id));
+            const missing = parsed.consents.filter(c => !existingOrigins.has(c.call_id_origin || c.consent_id));
+            if (missing.length > 0) {
+              setConsentStoreDirect({ consents: [...currentStore.consents, ...missing] });
+            }
+          }
+        }
         memCache = parsed;
         return memCache;
       }
@@ -344,6 +382,12 @@ export async function readStore(): Promise<AppDatabase> {
 let writeQueue = Promise.resolve();
 
 export async function writeStore(data: AppDatabase): Promise<void> {
+  // Ensure consents are bundled in the database payload so they never get lost
+  const cs = readConsentStoreSync();
+  if (cs.consents && cs.consents.length > 0) {
+    data.consents = cs.consents;
+  }
+
   memCache = data;
   const dir = path.dirname(DATA_PATH_ENC);
   if (!existsSync(dir)) {
